@@ -20,7 +20,7 @@ Requires Docker and Docker Compose.
    ```
 
    This starts three services: `app` (Django dev server on
-   `localhost:8000`), `db` (Postgres 16 on `localhost:5432`), and
+   `localhost:8000`), `db` (Postgres 18 on `localhost:5432`), and
    `redis` (Redis 7 on `localhost:6379`). `docker-compose.override.yml`
    is picked up automatically and gives the `app` container hot reload
    via a bind mount of the repo.
