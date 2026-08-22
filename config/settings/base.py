@@ -22,6 +22,10 @@ SECRET_KEY = env("DJANGO_SECRET_KEY")
 
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 
+# Must be set before this project's first-ever migration - see the
+# StaffUser model in tenants/models.py.
+AUTH_USER_MODEL = "tenants.StaffUser"
+
 
 # Application definition
 

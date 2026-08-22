@@ -1,3 +1,4 @@
+from django.contrib.auth.models import AbstractUser
 from django.db import models
 
 
@@ -48,3 +49,16 @@ class Tenant(models.Model):
 
     def __str__(self):
         return self.business_name
+
+
+class StaffUser(AbstractUser):
+    class Role(models.TextChoices):
+        OWNER = "owner", "Owner"
+        STAFF = "staff", "Staff"
+        PLATFORM_ADMIN = "platform_admin", "Platform Admin"
+
+    # Nullable: platform admins aren't scoped to any single tenant.
+    tenant = models.ForeignKey(
+        Tenant, null=True, blank=True, on_delete=models.CASCADE, related_name="staff_users"
+    )
+    role = models.CharField(max_length=20, choices=Role.choices, default=Role.STAFF)
