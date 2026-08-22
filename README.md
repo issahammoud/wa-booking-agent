@@ -16,35 +16,38 @@ Requires Docker and Docker Compose.
 2. Bring up the stack:
 
    ```sh
-   docker compose up --build
+   make up
    ```
 
-   This starts three services: `app` (Django dev server on
-   `localhost:8000`), `db` (Postgres 18 on `localhost:5432`), and
-   `redis` (Redis 7 on `localhost:6379`). `docker-compose.override.yml`
+   This starts three services in the background: `app` (Django dev
+   server on `localhost:8000`), `db` (Postgres 18 on `localhost:5432`),
+   and `redis` (Redis 7 on `localhost:6379`). `docker-compose.override.yml`
    is picked up automatically and gives the `app` container hot reload
    via a bind mount of the repo.
 
-3. In another terminal, apply migrations:
+3. Apply migrations:
 
    ```sh
-   docker compose exec app python manage.py migrate
+   make migrate
    ```
 
 4. Confirm everything is wired up:
 
    ```sh
-   curl localhost:8000/health/
+   make health
    ```
 
    should return `{"database": "ok", "redis": "ok"}` with a 200 status.
 
+Run `make help` to see every available target, including `down` and
+`shell`.
+
 ## Running tests and linters
 
 ```sh
-docker compose exec app pytest
-docker compose exec app ruff check .
-docker compose exec app black --check .
+make test
+make lint
+make format-check
 ```
 
 ## Pre-commit hooks
@@ -54,12 +57,11 @@ Install once per clone (needs a local Python virtualenv with
 not in the container):
 
 ```sh
-python3.12 -m venv .venv
-.venv/bin/pip install -r requirements/dev.txt
-.venv/bin/pre-commit install
+make precommit-install
 ```
 
-From then on, ruff and black run automatically on every commit.
+From then on, ruff and black run automatically on every commit. Run
+`make precommit-run` to run all hooks against the whole repo on demand.
 
 ## Project layout
 
