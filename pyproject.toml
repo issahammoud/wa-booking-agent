@@ -19,3 +19,7 @@ select = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["config", "core", "tenants", "conversations", "bookings", "integrations"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "config.settings.dev"
+python_files = ["tests.py", "test_*.py", "*_test.py"]
