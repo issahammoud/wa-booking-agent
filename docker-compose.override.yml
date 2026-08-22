@@ -1,0 +1,21 @@
+# Auto-loaded alongside docker-compose.yml for local development: installs
+# dev dependencies, bind-mounts the source for hot reload, and runs the
+# Django dev server instead of gunicorn.
+services:
+  app:
+    build:
+      args:
+        REQUIREMENTS_FILE: requirements/dev.txt
+    volumes:
+      - .:/app
+    command: python manage.py runserver 0.0.0.0:8000
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
+
+  db:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
