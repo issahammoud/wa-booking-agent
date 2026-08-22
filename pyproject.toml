@@ -23,3 +23,19 @@ known-first-party = ["config", "core", "tenants", "conversations", "bookings", "
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "config.settings.dev"
 python_files = ["tests.py", "test_*.py", "*_test.py"]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "*/migrations/*",
+    "manage.py",
+    "config/asgi.py",
+    "config/wsgi.py",
+    "config/settings/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
