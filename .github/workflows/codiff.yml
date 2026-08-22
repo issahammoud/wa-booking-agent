@@ -1,0 +1,13 @@
+name: codiff
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  codiff:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: issahammoud/codiff-action@v1
