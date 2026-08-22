@@ -1,0 +1,17 @@
+.git
+.github
+.venv
+venv/
+.env
+.env.*
+!.env.example
+db.sqlite3
+db.sqlite3-journal
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov/
+.ruff_cache
+.claude
+README.md
