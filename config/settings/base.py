@@ -26,6 +26,12 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 # StaffUser model in tenants/models.py.
 AUTH_USER_MODEL = "tenants.StaffUser"
 
+LOGIN_URL = "login"
+# "conversation-list" is wired in the conversations app (tenant-scoped
+# permission check ticket) - it's the staff dashboard landing page.
+LOGIN_REDIRECT_URL = "conversation-list"
+LOGOUT_REDIRECT_URL = "login"
+
 
 # Application definition
 
