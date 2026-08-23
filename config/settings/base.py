@@ -93,6 +93,7 @@ REDIS_URL = env("REDIS_URL")
 # WhatsApp Cloud API webhook - platform-level (one Meta App serves every
 # tenant; each tenant is identified inside the payload by phone_number_id).
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = env("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
+WHATSAPP_APP_SECRET = env("WHATSAPP_APP_SECRET")
 
 
 # Password validation
