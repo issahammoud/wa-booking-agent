@@ -52,6 +52,8 @@ jobs:
       DJANGO_ALLOWED_HOSTS: localhost
       DATABASE_URL: postgres://wa_booking_agent:wa_booking_agent@localhost:5432/wa_booking_agent
       REDIS_URL: redis://localhost:6379/0
+      WHATSAPP_WEBHOOK_VERIFY_TOKEN: ci-verify-token
+      WHATSAPP_APP_SECRET: ci-app-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
