@@ -9,6 +9,7 @@ from django.urls import reverse
 
 from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
+from integrations.agent.mock import MockAgent
 from integrations.whatsapp_client import send_text_message
 
 MINIMAL_PAYLOAD = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
@@ -254,3 +255,19 @@ def test_send_text_message_returns_none_on_failure(tenant, caplog):
 
     assert result is None
     assert "Failed to send WhatsApp message" in caplog.text
+
+
+def test_mock_agent_returns_tool_call_on_booking_keyword():
+    agent = MockAgent()
+    messages = [Message(content="Hi"), Message(content="I'd like to book an appointment")]
+    response = agent.respond(conversation=None, messages=messages)
+    assert response.action == "tool_call"
+    assert response.tool == "check_availability"
+
+
+def test_mock_agent_returns_canned_reply_otherwise():
+    agent = MockAgent()
+    messages = [Message(content="Hello there"), Message(content="Just saying hi")]
+    response = agent.respond(conversation=None, messages=messages)
+    assert response.action == "reply"
+    assert response.text == "Thanks for your message, how can I help?"
