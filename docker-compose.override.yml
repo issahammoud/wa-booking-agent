@@ -19,3 +19,12 @@ services:
   redis:
     ports:
       - "6379:6379"
+
+  celery:
+    build:
+      args:
+        REQUIREMENTS_FILE: requirements/dev.txt
+    volumes:
+      - .:/app
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.dev
