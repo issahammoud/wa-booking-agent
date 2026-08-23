@@ -143,3 +143,67 @@ def test_failed_reply_is_not_logged_as_outbound_message(tenant, end_user, caplog
 
     assert "Failed to send reply" in caplog.text
     assert not conversation.messages.filter(direction=Message.Direction.OUTBOUND).exists()
+
+
+def test_gap_longer_than_debounce_window_triggers_two_processing_runs(tenant, end_user):
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+
+    with patch(
+        "conversations.tasks.send_text_message",
+        side_effect=[
+            {"messages": [{"id": "wamid.reply-a"}]},
+            {"messages": [{"id": "wamid.reply-a-2"}]},
+        ],
+    ) as mock_send:
+        # First burst: pushed and drained (simulating its debounce window
+        # having already elapsed with no further messages).
+        ts_a = buffer.push_message(tenant.id, end_user.id, 201)
+        check_and_drain_buffer(tenant.id, end_user.id, ts_a)
+        assert mock_send.call_count == 1
+
+        # A real gap later, a second unrelated burst arrives.
+        ts_b = buffer.push_message(tenant.id, end_user.id, 202)
+        check_and_drain_buffer(tenant.id, end_user.id, ts_b)
+        assert mock_send.call_count == 2
+
+    # Two independent replies, not deduped into one.
+    outbound_count = conversation.messages.filter(direction=Message.Direction.OUTBOUND).count()
+    assert outbound_count == 2
+
+
+def test_buffer_is_empty_after_processing_no_reprocessing_on_late_check(tenant, end_user):
+    Conversation.objects.create(tenant=tenant, end_user=end_user)
+
+    ts = buffer.push_message(tenant.id, end_user.id, 301)
+    with patch(
+        "conversations.tasks.send_text_message",
+        return_value={"messages": [{"id": "wamid.reply-b"}]},
+    ) as mock_send:
+        check_and_drain_buffer(tenant.id, end_user.id, ts)
+        assert mock_send.call_count == 1
+        assert buffer.peek(tenant.id, end_user.id) == []
+
+        # A stale/redelivered check for the same (now-drained) slot must not
+        # reprocess - get_last_message_at is None (cleared by drain), so
+        # this hits the "is None" branch and no-ops.
+        check_and_drain_buffer(tenant.id, end_user.id, ts)
+        assert mock_send.call_count == 1
+
+
+def test_concurrent_checks_for_same_slot_only_process_once(tenant, end_user):
+    """Simulates Celery's at-least-once delivery redelivering the same task."""
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+
+    ts = buffer.push_message(tenant.id, end_user.id, 401)
+    with patch(
+        "conversations.tasks.send_text_message",
+        return_value={"messages": [{"id": "wamid.reply-c"}]},
+    ) as mock_send:
+        # Both calls pass the timestamp check (same scheduled_at, nothing
+        # newer has been pushed) - the transactional drain is what ensures
+        # only the first actually has messages to process.
+        check_and_drain_buffer(tenant.id, end_user.id, ts)
+        check_and_drain_buffer(tenant.id, end_user.id, ts)
+
+    assert mock_send.call_count == 1
+    assert conversation.messages.filter(direction=Message.Direction.OUTBOUND).count() == 1
