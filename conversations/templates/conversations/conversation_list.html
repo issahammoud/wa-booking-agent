@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Conversations</title>
+  </head>
+  <body>
+    <h1>Conversations</h1>
+    <ul>
+      {% for conversation in conversation_list %}
+        <li>{{ conversation.end_user.phone_number }} - {{ conversation.status }}</li>
+      {% empty %}
+        <li>No conversations yet.</li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>
