@@ -82,22 +82,35 @@ def test_anonymous_user_redirected_to_login(client, db):
     assert response.url.startswith(reverse("login"))
 
 
-def test_debounce_buffer_processes_rapid_messages_exactly_once(tenant, end_user):
-    Conversation.objects.create(tenant=tenant, end_user=end_user)
+def _inbound(conversation, content, whatsapp_message_id):
+    return Message.objects.create(
+        conversation=conversation,
+        direction=Message.Direction.INBOUND,
+        message_type=Message.MessageType.TEXT,
+        content=content,
+        whatsapp_message_id=whatsapp_message_id,
+    )
 
-    ts1 = buffer.push_message(tenant.id, end_user.id, 101)
-    buffer.push_message(tenant.id, end_user.id, 102)
-    ts3 = buffer.push_message(tenant.id, end_user.id, 103)
+
+def test_debounce_buffer_processes_rapid_messages_exactly_once(tenant, end_user):
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    m1 = _inbound(conversation, "Hi", "wamid.rapid-1")
+    m2 = _inbound(conversation, "there", "wamid.rapid-2")
+    m3 = _inbound(conversation, "how are you", "wamid.rapid-3")
+
+    ts1 = buffer.push_message(tenant.id, end_user.id, m1.id)
+    buffer.push_message(tenant.id, end_user.id, m2.id)
+    ts3 = buffer.push_message(tenant.id, end_user.id, m3.id)
 
     with patch(
         "conversations.tasks.send_text_message",
         return_value={"messages": [{"id": "wamid.reply-1"}]},
     ) as mock_send:
-        # The earliest-scheduled check should no-op: a newer message (102,
-        # 103) arrived after ts1, so a later-scheduled check owns this.
+        # The earliest-scheduled check should no-op: a newer message (m2,
+        # m3) arrived after ts1, so a later-scheduled check owns this.
         check_and_drain_buffer(tenant.id, end_user.id, ts1)
         mock_send.assert_not_called()
-        assert buffer.peek(tenant.id, end_user.id) == [101, 102, 103]
+        assert buffer.peek(tenant.id, end_user.id) == [m1.id, m2.id, m3.id]
 
         # The latest-scheduled check should process all three, exactly once.
         check_and_drain_buffer(tenant.id, end_user.id, ts3)
@@ -108,15 +121,9 @@ def test_debounce_buffer_processes_rapid_messages_exactly_once(tenant, end_user)
 
 def test_successful_reply_logged_as_outbound_message_after_inbound(tenant, end_user):
     conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
-    Message.objects.create(
-        conversation=conversation,
-        direction=Message.Direction.INBOUND,
-        message_type=Message.MessageType.TEXT,
-        content="Hello",
-        whatsapp_message_id="wamid.inbound-1",
-    )
+    inbound = _inbound(conversation, "Hello", "wamid.inbound-1")
 
-    ts = buffer.push_message(tenant.id, end_user.id, 999)
+    ts = buffer.push_message(tenant.id, end_user.id, inbound.id)
     with patch(
         "conversations.tasks.send_text_message",
         return_value={"messages": [{"id": "wamid.outbound-1"}]},
@@ -129,14 +136,34 @@ def test_successful_reply_logged_as_outbound_message_after_inbound(tenant, end_u
         Message.Direction.OUTBOUND,
     ]
     outbound = messages[1]
-    assert outbound.content == "Got your message!"
+    # "Hello" has no booking keyword, so MockAgent's canned reply applies.
+    assert outbound.content == "Thanks for your message, how can I help?"
     assert outbound.whatsapp_message_id == "wamid.outbound-1"
+
+
+def test_tool_call_reply_describes_available_slots(tenant, end_user):
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    inbound = _inbound(conversation, "I'd like to book an appointment", "wamid.booking-1")
+
+    ts = buffer.push_message(tenant.id, end_user.id, inbound.id)
+    with patch(
+        "conversations.tasks.send_text_message",
+        return_value={"messages": [{"id": "wamid.outbound-2"}]},
+    ) as mock_send:
+        check_and_drain_buffer(tenant.id, end_user.id, ts)
+
+    reply_text = mock_send.call_args.args[2]
+    assert reply_text.startswith("Here are some available times:")
+
+    outbound = conversation.messages.filter(direction=Message.Direction.OUTBOUND).get()
+    assert outbound.content == reply_text
 
 
 def test_failed_reply_is_not_logged_as_outbound_message(tenant, end_user, caplog):
     conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    inbound = _inbound(conversation, "Hello", "wamid.inbound-2")
 
-    ts = buffer.push_message(tenant.id, end_user.id, 998)
+    ts = buffer.push_message(tenant.id, end_user.id, inbound.id)
     with patch("conversations.tasks.send_text_message", return_value=None):
         with caplog.at_level("ERROR"):
             check_and_drain_buffer(tenant.id, end_user.id, ts)
@@ -157,12 +184,14 @@ def test_gap_longer_than_debounce_window_triggers_two_processing_runs(tenant, en
     ) as mock_send:
         # First burst: pushed and drained (simulating its debounce window
         # having already elapsed with no further messages).
-        ts_a = buffer.push_message(tenant.id, end_user.id, 201)
+        m_a = _inbound(conversation, "Hi", "wamid.gap-a")
+        ts_a = buffer.push_message(tenant.id, end_user.id, m_a.id)
         check_and_drain_buffer(tenant.id, end_user.id, ts_a)
         assert mock_send.call_count == 1
 
         # A real gap later, a second unrelated burst arrives.
-        ts_b = buffer.push_message(tenant.id, end_user.id, 202)
+        m_b = _inbound(conversation, "Hello again", "wamid.gap-b")
+        ts_b = buffer.push_message(tenant.id, end_user.id, m_b.id)
         check_and_drain_buffer(tenant.id, end_user.id, ts_b)
         assert mock_send.call_count == 2
 
@@ -172,9 +201,10 @@ def test_gap_longer_than_debounce_window_triggers_two_processing_runs(tenant, en
 
 
 def test_buffer_is_empty_after_processing_no_reprocessing_on_late_check(tenant, end_user):
-    Conversation.objects.create(tenant=tenant, end_user=end_user)
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    inbound = _inbound(conversation, "Hi", "wamid.late-check-1")
 
-    ts = buffer.push_message(tenant.id, end_user.id, 301)
+    ts = buffer.push_message(tenant.id, end_user.id, inbound.id)
     with patch(
         "conversations.tasks.send_text_message",
         return_value={"messages": [{"id": "wamid.reply-b"}]},
@@ -193,8 +223,9 @@ def test_buffer_is_empty_after_processing_no_reprocessing_on_late_check(tenant, 
 def test_concurrent_checks_for_same_slot_only_process_once(tenant, end_user):
     """Simulates Celery's at-least-once delivery redelivering the same task."""
     conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    inbound = _inbound(conversation, "Hi", "wamid.concurrent-1")
 
-    ts = buffer.push_message(tenant.id, end_user.id, 401)
+    ts = buffer.push_message(tenant.id, end_user.id, inbound.id)
     with patch(
         "conversations.tasks.send_text_message",
         return_value={"messages": [{"id": "wamid.reply-c"}]},

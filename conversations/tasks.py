@@ -20,13 +20,12 @@ from django.conf import settings
 
 from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
+from integrations.agent.mock import MockAgent
+from integrations.agent.tools import execute_tool
 from integrations.whatsapp_client import send_text_message
 from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
-
-# STUB reply - a real agent pipeline replaces this in a later sprint.
-STUB_REPLY_TEXT = "Got your message!"
 
 
 def schedule_buffer_check(tenant_id, end_user_id, message_id):
@@ -74,7 +73,10 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
         )
         return
 
-    result = send_text_message(tenant, end_user.phone_number, STUB_REPLY_TEXT)
+    messages = list(Message.objects.filter(id__in=message_ids).order_by("created_at"))
+    reply_text = _get_reply_text(tenant, conversation, messages)
+
+    result = send_text_message(tenant, end_user.phone_number, reply_text)
     if result is None:
         # Policy: a failed send is never logged as a Message row - a Message
         # represents something that actually reached the conversation, and a
@@ -95,7 +97,25 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
         conversation=conversation,
         direction=Message.Direction.OUTBOUND,
         message_type=Message.MessageType.TEXT,
-        content=STUB_REPLY_TEXT,
+        content=reply_text,
         whatsapp_message_id=whatsapp_message_id,
         raw_payload=result,
     )
+
+
+def _get_reply_text(tenant, conversation, messages):
+    response = MockAgent().respond(conversation, messages)
+    if response.action == "reply":
+        return response.text
+
+    tool_result = execute_tool(response.tool, tenant, response.tool_args)
+    return _format_tool_result(response.tool, tool_result)
+
+
+def _format_tool_result(tool_name, result):
+    # Deliberately simple - a real agent (later sprint) replaces this with
+    # an actual conversational response built from the tool's result.
+    if tool_name == "check_availability":
+        slots = ", ".join(slot.start.strftime("%a %b %d, %H:%M") for slot in result)
+        return f"Here are some available times: {slots}"
+    return str(result)
