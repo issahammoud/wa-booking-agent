@@ -4,11 +4,12 @@ import json
 import logging
 
 from django.conf import settings
+from django.db import IntegrityError, transaction
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from conversations.models import Conversation, EndUser
+from conversations.models import Conversation, EndUser, Message
 from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,34 @@ def _handle_incoming(request):
         return HttpResponse(status=403)
 
     payload = json.loads(request.body)
-    for _message, _tenant, _end_user, _conversation in _resolve_messages(payload):
-        pass  # persistence lands in the next commit
+    for message, _tenant, _end_user, conversation in _resolve_messages(payload):
+        _persist_message(message, conversation)
 
     return HttpResponse(status=200)
+
+
+def _persist_message(message, conversation):
+    message_type = message.get("type", "")
+    content = ""
+    media_reference = ""
+    if message_type == "text":
+        content = message.get("text", {}).get("body", "")
+    elif message_type in ("audio", "image"):
+        media_reference = message.get(message_type, {}).get("id", "")
+
+    try:
+        with transaction.atomic():
+            Message.objects.create(
+                conversation=conversation,
+                direction=Message.Direction.INBOUND,
+                message_type=message_type,
+                content=content,
+                media_reference=media_reference,
+                whatsapp_message_id=message.get("id"),
+                raw_payload=message,
+            )
+    except IntegrityError:
+        logger.info("Duplicate webhook message id=%s, ignoring", message.get("id"))
 
 
 def _resolve_messages(payload):

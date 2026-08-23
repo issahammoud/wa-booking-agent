@@ -4,7 +4,7 @@ import json
 
 from django.urls import reverse
 
-from conversations.models import Conversation, EndUser
+from conversations.models import Conversation, EndUser, Message
 
 MINIMAL_PAYLOAD = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
 
@@ -148,3 +148,29 @@ def test_webhook_reuses_existing_active_conversation(client, settings, tenant):
     _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
 
     assert Conversation.objects.filter(tenant=tenant, end_user=end_user).count() == 1
+
+
+def test_webhook_persists_inbound_message(client, settings, tenant):
+    settings.WHATSAPP_APP_SECRET = "app-secret"
+    tenant.phone_number_id = "123456123"
+    tenant.save()
+
+    _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+
+    message = Message.objects.get(whatsapp_message_id="wamid.sample-1")
+    assert message.direction == Message.Direction.INBOUND
+    assert message.message_type == Message.MessageType.TEXT
+    assert message.content == "Hi there"
+
+
+def test_webhook_dedupes_on_replayed_whatsapp_message_id(client, settings, tenant):
+    settings.WHATSAPP_APP_SECRET = "app-secret"
+    tenant.phone_number_id = "123456123"
+    tenant.save()
+
+    first = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+    second = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert Message.objects.filter(whatsapp_message_id="wamid.sample-1").count() == 1
