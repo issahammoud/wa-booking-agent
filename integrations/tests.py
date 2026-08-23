@@ -3,6 +3,7 @@ import hmac
 import json
 from unittest.mock import Mock, patch
 
+import pytest
 import requests
 from django.urls import reverse
 
@@ -11,6 +12,21 @@ from conversations.models import Conversation, EndUser, Message
 from integrations.whatsapp_client import send_text_message
 
 MINIMAL_PAYLOAD = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_celery_dispatch():
+    """Prevent every webhook test in this module from leaking a real
+    countdown task into the broker - schedule_buffer_check() calls
+    check_and_drain_buffer.apply_async() for real on any successfully
+    persisted inbound message. Without this, that task fires later (after
+    the test's DB transaction has rolled back) against a live dev Celery
+    worker, producing "missing tenant/end_user" error noise. Buffer pushes
+    themselves are unaffected - only the broker dispatch is stubbed.
+    """
+    with patch("conversations.tasks.check_and_drain_buffer.apply_async"):
+        yield
+
 
 # Based on Meta's documented WhatsApp Cloud API webhook payload format.
 SAMPLE_MESSAGE_PAYLOAD = {
@@ -185,21 +201,17 @@ def test_webhook_buffers_new_message_but_not_a_duplicate(client, settings, tenan
     tenant.phone_number_id = "123456123"
     tenant.save()
 
-    # Don't leave a real countdown task sitting in the broker for a
-    # worker to pick up after this test's DB rows are rolled back - only
-    # the buffer push (verified via buffer.peek below) matters here.
-    with patch("conversations.tasks.check_and_drain_buffer.apply_async"):
-        _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
-        message = Message.objects.get(whatsapp_message_id="wamid.sample-1")
-        end_user = EndUser.objects.get(tenant=tenant, phone_number="16315551181")
-        assert buffer.peek(tenant.id, end_user.id) == [message.id]
+    _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+    message = Message.objects.get(whatsapp_message_id="wamid.sample-1")
+    end_user = EndUser.objects.get(tenant=tenant, phone_number="16315551181")
+    assert buffer.peek(tenant.id, end_user.id) == [message.id]
 
-        with caplog.at_level("INFO"):
-            response = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
-        assert response.status_code == 200
-        assert "Duplicate webhook message" in caplog.text
-        # Still just the one buffered id - the duplicate was never scheduled.
-        assert buffer.peek(tenant.id, end_user.id) == [message.id]
+    with caplog.at_level("INFO"):
+        response = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+    assert response.status_code == 200
+    assert "Duplicate webhook message" in caplog.text
+    # Still just the one buffered id - the duplicate was never scheduled.
+    assert buffer.peek(tenant.id, end_user.id) == [message.id]
 
     buffer.drain(tenant.id, end_user.id)
 
