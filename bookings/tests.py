@@ -1,10 +1,12 @@
 import datetime
+from itertools import pairwise
 
 import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from bookings.availability import check_availability
 from bookings.models import BlockedDate, Booking
 from conversations.models import EndUser
 
@@ -81,3 +83,17 @@ def test_blocked_date_unique_per_tenant(tenant):
 
     with pytest.raises(IntegrityError), transaction.atomic():
         BlockedDate.objects.create(tenant=tenant, date=today)
+
+
+def test_check_availability_returns_consistent_fake_slots(tenant):
+    slots = check_availability(tenant)
+
+    assert len(slots) == 3
+    now = timezone.now()
+    for slot in slots:
+        assert slot.start > now
+        assert slot.end > slot.start
+        assert (slot.end - slot.start) == datetime.timedelta(minutes=30)
+    # Ordered, non-overlapping.
+    for earlier, later in pairwise(slots):
+        assert later.start > earlier.end
