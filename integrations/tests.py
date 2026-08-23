@@ -9,6 +9,7 @@ from django.urls import reverse
 
 from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
+from conversations.tasks import check_and_drain_buffer
 from integrations.agent.mock import MockAgent
 from integrations.agent.tools import ask_clarification, execute_tool
 from integrations.whatsapp_client import send_text_message
@@ -291,3 +292,41 @@ def test_execute_tool_dispatches_ask_clarification(tenant):
 def test_execute_tool_raises_on_unknown_tool(tenant):
     with pytest.raises(ValueError, match="Unknown tool"):
         execute_tool("not_a_real_tool", tenant, {})
+
+
+def test_full_pipeline_inbound_booking_message_to_outbound_reply(client, settings, tenant):
+    """Inbound webhook -> persist -> buffer -> MockAgent tool_call ->
+    check_availability -> outbound reply, with send_text_message mocked
+    (no real network call). Simulates the real webhook payload rather than
+    calling internal functions directly, unlike the narrower routing tests
+    above.
+    """
+    settings.WHATSAPP_APP_SECRET = "app-secret"
+    tenant.phone_number_id = "123456123"
+    tenant.save()
+
+    booking_payload = json.loads(json.dumps(SAMPLE_MESSAGE_PAYLOAD))
+    inner_message = booking_payload["entry"][0]["changes"][0]["value"]["messages"][0]
+    inner_message["id"] = "wamid.pipeline-booking-1"
+    inner_message["text"]["body"] = "I'd like to book an appointment please"
+
+    with patch("conversations.tasks.check_and_drain_buffer.apply_async") as mock_apply_async:
+        response = _post_webhook(client, booking_payload, "app-secret")
+    assert response.status_code == 200
+
+    tenant_id, end_user_id, scheduled_at = mock_apply_async.call_args.kwargs["args"]
+
+    with patch(
+        "conversations.tasks.send_text_message",
+        return_value={"messages": [{"id": "wamid.pipeline-reply-1"}]},
+    ) as mock_send:
+        check_and_drain_buffer(tenant_id, end_user_id, scheduled_at)
+
+    reply_text = mock_send.call_args.args[2]
+    assert reply_text.startswith("Here are some available times:")
+
+    end_user = EndUser.objects.get(tenant=tenant, phone_number="16315551181")
+    conversation = Conversation.objects.get(tenant=tenant, end_user=end_user)
+    outbound = conversation.messages.get(direction=Message.Direction.OUTBOUND)
+    assert outbound.content == reply_text
+    assert outbound.whatsapp_message_id == "wamid.pipeline-reply-1"
