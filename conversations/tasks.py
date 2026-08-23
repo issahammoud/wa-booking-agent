@@ -19,7 +19,7 @@ from celery import shared_task
 from django.conf import settings
 
 from conversations import buffer
-from conversations.models import Conversation, EndUser
+from conversations.models import Conversation, EndUser, Message
 from integrations.whatsapp_client import send_text_message
 from tenants.models import Tenant
 
@@ -64,9 +64,24 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
         .order_by("-last_message_at")
         .first()
     )
+    if conversation is None:
+        # Shouldn't happen in the real flow (the webhook always gets/creates
+        # one before scheduling a check) - defensive, not expected.
+        logger.error(
+            "Buffer drained but no active conversation for tenant=%s end_user=%s",
+            tenant_id,
+            end_user_id,
+        )
+        return
 
     result = send_text_message(tenant, end_user.phone_number, STUB_REPLY_TEXT)
     if result is None:
+        # Policy: a failed send is never logged as a Message row - a Message
+        # represents something that actually reached the conversation, and a
+        # failed send was never seen by the end user. Only the error is
+        # logged; the inbound messages that triggered this remain in
+        # Postgres either way (persisted by the webhook, independent of
+        # whether the reply succeeds).
         logger.error(
             "Failed to send reply for tenant=%s end_user=%s buffered_message_ids=%s",
             tenant_id,
@@ -75,10 +90,12 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
         )
         return
 
-    logger.info(
-        "Sent reply for tenant=%s end_user=%s buffered_message_ids=%s conversation=%s",
-        tenant_id,
-        end_user_id,
-        message_ids,
-        conversation.id if conversation else None,
+    whatsapp_message_id = (result.get("messages") or [{}])[0].get("id") or None
+    Message.objects.create(
+        conversation=conversation,
+        direction=Message.Direction.OUTBOUND,
+        message_type=Message.MessageType.TEXT,
+        content=STUB_REPLY_TEXT,
+        whatsapp_message_id=whatsapp_message_id,
+        raw_payload=result,
     )

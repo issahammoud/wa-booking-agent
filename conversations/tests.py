@@ -83,6 +83,8 @@ def test_anonymous_user_redirected_to_login(client, db):
 
 
 def test_debounce_buffer_processes_rapid_messages_exactly_once(tenant, end_user):
+    Conversation.objects.create(tenant=tenant, end_user=end_user)
+
     ts1 = buffer.push_message(tenant.id, end_user.id, 101)
     buffer.push_message(tenant.id, end_user.id, 102)
     ts3 = buffer.push_message(tenant.id, end_user.id, 103)
@@ -102,3 +104,42 @@ def test_debounce_buffer_processes_rapid_messages_exactly_once(tenant, end_user)
         mock_send.assert_called_once()
 
     assert buffer.peek(tenant.id, end_user.id) == []
+
+
+def test_successful_reply_logged_as_outbound_message_after_inbound(tenant, end_user):
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    Message.objects.create(
+        conversation=conversation,
+        direction=Message.Direction.INBOUND,
+        message_type=Message.MessageType.TEXT,
+        content="Hello",
+        whatsapp_message_id="wamid.inbound-1",
+    )
+
+    ts = buffer.push_message(tenant.id, end_user.id, 999)
+    with patch(
+        "conversations.tasks.send_text_message",
+        return_value={"messages": [{"id": "wamid.outbound-1"}]},
+    ):
+        check_and_drain_buffer(tenant.id, end_user.id, ts)
+
+    messages = list(conversation.messages.order_by("created_at"))
+    assert [m.direction for m in messages] == [
+        Message.Direction.INBOUND,
+        Message.Direction.OUTBOUND,
+    ]
+    outbound = messages[1]
+    assert outbound.content == "Got your message!"
+    assert outbound.whatsapp_message_id == "wamid.outbound-1"
+
+
+def test_failed_reply_is_not_logged_as_outbound_message(tenant, end_user, caplog):
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+
+    ts = buffer.push_message(tenant.id, end_user.id, 998)
+    with patch("conversations.tasks.send_text_message", return_value=None):
+        with caplog.at_level("ERROR"):
+            check_and_drain_buffer(tenant.id, end_user.id, ts)
+
+    assert "Failed to send reply" in caplog.text
+    assert not conversation.messages.filter(direction=Message.Direction.OUTBOUND).exists()
