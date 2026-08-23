@@ -96,6 +96,11 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_RESULT_SERIALIZER = "json"
 
+# How long to wait, after the most recent inbound message from an end user,
+# before treating a burst of rapid-fire messages as "done" and processing
+# them together. See conversations/tasks.py.
+DEBOUNCE_WINDOW_SECONDS = env.int("DEBOUNCE_WINDOW_SECONDS", default=5)
+
 # WhatsApp Cloud API webhook - platform-level (one Meta App serves every
 # tenant; each tenant is identified inside the payload by phone_number_id).
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = env("WHATSAPP_WEBHOOK_VERIFY_TOKEN")

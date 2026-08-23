@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import requests
 from django.urls import reverse
 
+from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
 from integrations.whatsapp_client import send_text_message
 
@@ -179,23 +180,28 @@ def test_webhook_dedupes_on_replayed_whatsapp_message_id(client, settings, tenan
     assert Message.objects.filter(whatsapp_message_id="wamid.sample-1").count() == 1
 
 
-def test_webhook_logs_processing_placeholder_only_for_new_messages(
-    client, settings, tenant, caplog
-):
+def test_webhook_buffers_new_message_but_not_a_duplicate(client, settings, tenant, caplog):
     settings.WHATSAPP_APP_SECRET = "app-secret"
     tenant.phone_number_id = "123456123"
     tenant.save()
 
-    with caplog.at_level("INFO"):
+    # Don't leave a real countdown task sitting in the broker for a
+    # worker to pick up after this test's DB rows are rolled back - only
+    # the buffer push (verified via buffer.peek below) matters here.
+    with patch("conversations.tasks.check_and_drain_buffer.apply_async"):
         _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
-    assert "Would enqueue processing" in caplog.text
+        message = Message.objects.get(whatsapp_message_id="wamid.sample-1")
+        end_user = EndUser.objects.get(tenant=tenant, phone_number="16315551181")
+        assert buffer.peek(tenant.id, end_user.id) == [message.id]
 
-    caplog.clear()
-    with caplog.at_level("INFO"):
-        response = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
-    assert response.status_code == 200
-    assert "Would enqueue processing" not in caplog.text
-    assert "Duplicate webhook message" in caplog.text
+        with caplog.at_level("INFO"):
+            response = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+        assert response.status_code == 200
+        assert "Duplicate webhook message" in caplog.text
+        # Still just the one buffered id - the duplicate was never scheduled.
+        assert buffer.peek(tenant.id, end_user.id) == [message.id]
+
+    buffer.drain(tenant.id, end_user.id)
 
 
 def test_send_text_message_posts_expected_shape(tenant):

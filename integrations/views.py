@@ -10,6 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from conversations.models import Conversation, EndUser, Message
+from conversations.tasks import schedule_buffer_check
 from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -37,13 +38,12 @@ def _handle_incoming(request):
         return HttpResponse(status=403)
 
     payload = json.loads(request.body)
-    for message, _tenant, _end_user, conversation in _resolve_messages(payload):
+    for message, tenant, end_user, conversation in _resolve_messages(payload):
         saved_message = _persist_message(message, conversation)
         if saved_message is not None:
-            # Placeholder: Sprint 4 replaces this with enqueuing a Celery
-            # task. Deliberately skipped for a duplicate - it was already
-            # (or is already being) processed on first delivery.
-            logger.info("Would enqueue processing for message id=%s", saved_message.id)
+            # Deliberately skipped for a duplicate - it was already (or is
+            # already being) processed on first delivery.
+            schedule_buffer_check(tenant.id, end_user.id, saved_message.id)
 
     return HttpResponse(status=200)
 

@@ -1,8 +1,17 @@
+from unittest.mock import patch
+
 import pytest
 from django.db import IntegrityError, transaction
 from django.urls import reverse
 
+from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
+from conversations.tasks import check_and_drain_buffer
+
+
+@pytest.fixture
+def end_user(tenant):
+    return EndUser.objects.create(tenant=tenant, phone_number="+15550009999")
 
 
 def test_end_user_unique_per_tenant_phone_number(tenant, other_tenant):
@@ -71,3 +80,25 @@ def test_anonymous_user_redirected_to_login(client, db):
     response = client.get(reverse("conversation-list"))
     assert response.status_code == 302
     assert response.url.startswith(reverse("login"))
+
+
+def test_debounce_buffer_processes_rapid_messages_exactly_once(tenant, end_user):
+    ts1 = buffer.push_message(tenant.id, end_user.id, 101)
+    buffer.push_message(tenant.id, end_user.id, 102)
+    ts3 = buffer.push_message(tenant.id, end_user.id, 103)
+
+    with patch(
+        "conversations.tasks.send_text_message",
+        return_value={"messages": [{"id": "wamid.reply-1"}]},
+    ) as mock_send:
+        # The earliest-scheduled check should no-op: a newer message (102,
+        # 103) arrived after ts1, so a later-scheduled check owns this.
+        check_and_drain_buffer(tenant.id, end_user.id, ts1)
+        mock_send.assert_not_called()
+        assert buffer.peek(tenant.id, end_user.id) == [101, 102, 103]
+
+        # The latest-scheduled check should process all three, exactly once.
+        check_and_drain_buffer(tenant.id, end_user.id, ts3)
+        mock_send.assert_called_once()
+
+    assert buffer.peek(tenant.id, end_user.id) == []
