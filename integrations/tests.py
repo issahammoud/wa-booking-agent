@@ -174,3 +174,22 @@ def test_webhook_dedupes_on_replayed_whatsapp_message_id(client, settings, tenan
     assert first.status_code == 200
     assert second.status_code == 200
     assert Message.objects.filter(whatsapp_message_id="wamid.sample-1").count() == 1
+
+
+def test_webhook_logs_processing_placeholder_only_for_new_messages(
+    client, settings, tenant, caplog
+):
+    settings.WHATSAPP_APP_SECRET = "app-secret"
+    tenant.phone_number_id = "123456123"
+    tenant.save()
+
+    with caplog.at_level("INFO"):
+        _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+    assert "Would enqueue processing" in caplog.text
+
+    caplog.clear()
+    with caplog.at_level("INFO"):
+        response = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+    assert response.status_code == 200
+    assert "Would enqueue processing" not in caplog.text
+    assert "Duplicate webhook message" in caplog.text

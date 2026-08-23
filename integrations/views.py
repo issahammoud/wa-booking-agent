@@ -38,12 +38,18 @@ def _handle_incoming(request):
 
     payload = json.loads(request.body)
     for message, _tenant, _end_user, conversation in _resolve_messages(payload):
-        _persist_message(message, conversation)
+        saved_message = _persist_message(message, conversation)
+        if saved_message is not None:
+            # Placeholder: Sprint 4 replaces this with enqueuing a Celery
+            # task. Deliberately skipped for a duplicate - it was already
+            # (or is already being) processed on first delivery.
+            logger.info("Would enqueue processing for message id=%s", saved_message.id)
 
     return HttpResponse(status=200)
 
 
 def _persist_message(message, conversation):
+    """Create a Message row for `message`, or return None if it's a duplicate."""
     message_type = message.get("type", "")
     content = ""
     media_reference = ""
@@ -54,7 +60,7 @@ def _persist_message(message, conversation):
 
     try:
         with transaction.atomic():
-            Message.objects.create(
+            return Message.objects.create(
                 conversation=conversation,
                 direction=Message.Direction.INBOUND,
                 message_type=message_type,
@@ -65,6 +71,7 @@ def _persist_message(message, conversation):
             )
     except IntegrityError:
         logger.info("Duplicate webhook message id=%s, ignoring", message.get("id"))
+        return None
 
 
 def _resolve_messages(payload):
