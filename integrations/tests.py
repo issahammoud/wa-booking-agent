@@ -1,10 +1,13 @@
 import hashlib
 import hmac
 import json
+from unittest.mock import Mock, patch
 
+import requests
 from django.urls import reverse
 
 from conversations.models import Conversation, EndUser, Message
+from integrations.whatsapp_client import send_text_message
 
 MINIMAL_PAYLOAD = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
 
@@ -193,3 +196,43 @@ def test_webhook_logs_processing_placeholder_only_for_new_messages(
     assert response.status_code == 200
     assert "Would enqueue processing" not in caplog.text
     assert "Duplicate webhook message" in caplog.text
+
+
+def test_send_text_message_posts_expected_shape(tenant):
+    tenant.phone_number_id = "123456123"
+    tenant.whatsapp_access_token = b"real-token"
+    tenant.save()
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"messages": [{"id": "wamid.outbound-1"}]}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("integrations.whatsapp_client.requests.post", return_value=mock_response) as post:
+        result = send_text_message(tenant, "16315551181", "Hi there")
+
+    assert result == {"messages": [{"id": "wamid.outbound-1"}]}
+    args, kwargs = post.call_args
+    assert args[0] == "https://graph.facebook.com/v21.0/123456123/messages"
+    assert kwargs["headers"] == {"Authorization": "Bearer real-token"}
+    assert kwargs["json"] == {
+        "messaging_product": "whatsapp",
+        "to": "16315551181",
+        "type": "text",
+        "text": {"body": "Hi there"},
+    }
+
+
+def test_send_text_message_returns_none_on_failure(tenant, caplog):
+    tenant.phone_number_id = "123456123"
+    tenant.whatsapp_access_token = b"real-token"
+    tenant.save()
+
+    with patch(
+        "integrations.whatsapp_client.requests.post",
+        side_effect=requests.ConnectionError("boom"),
+    ):
+        with caplog.at_level("ERROR"):
+            result = send_text_message(tenant, "16315551181", "Hi there")
+
+    assert result is None
+    assert "Failed to send WhatsApp message" in caplog.text
