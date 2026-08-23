@@ -10,6 +10,7 @@ from django.urls import reverse
 from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
 from integrations.agent.mock import MockAgent
+from integrations.agent.tools import ask_clarification, execute_tool
 from integrations.whatsapp_client import send_text_message
 
 MINIMAL_PAYLOAD = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
@@ -271,3 +272,22 @@ def test_mock_agent_returns_canned_reply_otherwise():
     response = agent.respond(conversation=None, messages=messages)
     assert response.action == "reply"
     assert response.text == "Thanks for your message, how can I help?"
+
+
+def test_ask_clarification_returns_text_unchanged():
+    assert ask_clarification("What date works for you?") == "What date works for you?"
+
+
+def test_execute_tool_dispatches_check_availability(tenant):
+    result = execute_tool("check_availability", tenant, {})
+    assert len(result) == 3
+
+
+def test_execute_tool_dispatches_ask_clarification(tenant):
+    result = execute_tool("ask_clarification", tenant, {"text": "Which day?"})
+    assert result == "Which day?"
+
+
+def test_execute_tool_raises_on_unknown_tool(tenant):
+    with pytest.raises(ValueError, match="Unknown tool"):
+        execute_tool("not_a_real_tool", tenant, {})
