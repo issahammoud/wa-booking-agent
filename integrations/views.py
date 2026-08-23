@@ -1,10 +1,17 @@
 import hashlib
 import hmac
+import json
+import logging
 
 from django.conf import settings
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+
+from conversations.models import Conversation, EndUser
+from tenants.models import Tenant
+
+logger = logging.getLogger(__name__)
 
 
 @csrf_exempt
@@ -27,8 +34,49 @@ def _handle_verification(request):
 def _handle_incoming(request):
     if not _has_valid_signature(request):
         return HttpResponse(status=403)
-    # Payload parsing and persistence land in later commits.
+
+    payload = json.loads(request.body)
+    for _message, _tenant, _end_user, _conversation in _resolve_messages(payload):
+        pass  # persistence lands in the next commit
+
     return HttpResponse(status=200)
+
+
+def _resolve_messages(payload):
+    """Yield (message, tenant, end_user, conversation) for every message in the payload.
+
+    Skips changes with no "messages" key (e.g. status/read-receipt webhooks,
+    which Meta delivers on the same field) and messages for an unrecognized
+    phone_number_id (logged and ignored, not an error - could be a webhook
+    for a tenant not yet in our system).
+    """
+    for entry in payload.get("entry", []):
+        for change in entry.get("changes", []):
+            value = change.get("value", {})
+            messages = value.get("messages")
+            if not messages:
+                continue
+
+            phone_number_id = value.get("metadata", {}).get("phone_number_id")
+            tenant = Tenant.objects.filter(phone_number_id=phone_number_id).first()
+            if tenant is None:
+                logger.info("Ignoring webhook for unknown phone_number_id=%s", phone_number_id)
+                continue
+
+            contacts_by_wa_id = {c["wa_id"]: c for c in value.get("contacts", [])}
+
+            for message in messages:
+                sender = message.get("from")
+                display_name = contacts_by_wa_id.get(sender, {}).get("profile", {}).get("name", "")
+                end_user, _created = EndUser.objects.get_or_create(
+                    tenant=tenant,
+                    phone_number=sender,
+                    defaults={"display_name": display_name},
+                )
+                conversation, _created = Conversation.objects.get_or_create(
+                    tenant=tenant, end_user=end_user, status=Conversation.Status.ACTIVE
+                )
+                yield message, tenant, end_user, conversation
 
 
 def _has_valid_signature(request):
