@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from bookings.availability import TimeSlot, check_availability, compute_available_slots
 from bookings.models import BlockedDate, Booking, Service
-from bookings.services import SlotAlreadyBookedError, create_booking
+from bookings.services import SlotUnavailableError, create_booking
 from conversations.models import EndUser
 
 
@@ -217,5 +217,5 @@ def test_create_booking_raises_clear_error_on_duplicate_slot(tenant, end_user, s
 
     create_booking(tenant, end_user, slot, service)
 
-    with pytest.raises(SlotAlreadyBookedError):
+    with pytest.raises(SlotUnavailableError):
         create_booking(tenant, end_user, slot, service)
