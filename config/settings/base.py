@@ -90,6 +90,11 @@ DATABASES = {
 # Redis connection URL, used for caching, Celery, and the health check.
 REDIS_URL = env("REDIS_URL")
 
+# WhatsApp Cloud API webhook - platform-level (one Meta App serves every
+# tenant; each tenant is identified inside the payload by phone_number_id).
+WHATSAPP_WEBHOOK_VERIFY_TOKEN = env("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
+WHATSAPP_APP_SECRET = env("WHATSAPP_APP_SECRET")
+
 
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators

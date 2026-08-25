@@ -111,7 +111,12 @@ wa-booking-agent/
 │   ├── urls.py                      # /dashboard/conversations/
 │   └── templates/conversations/conversation_list.html
 ├── bookings/                        # Service, Booking, BlockedDate
-├── integrations/                    # CalendarConnection (OAuth credential storage)
+├── integrations/                    # CalendarConnection + the inbound WhatsApp webhook
+│   ├── models.py
+│   ├── views.py                     # whatsapp_webhook: handshake, signature check, persist
+│   └── urls.py                      # /webhook/whatsapp/
+├── docs/
+│   └── whatsapp-setup.md            # Meta App/WABA/webhook setup process (no secrets)
 ├── requirements/
 │   ├── base.txt / dev.txt / prod.txt
 ├── .github/workflows/
@@ -133,6 +138,17 @@ wa-booking-agent/
 | `/login/`, `/logout/`         | Django's built-in     | staff sign-in/out                         |
 | `/dashboard/conversations/`   | `ConversationListView`| tenant-scoped placeholder landing page    |
 | `/admin/`                     | Django admin          | all 9 models registered, superuser only   |
+| `/webhook/whatsapp/`          | `whatsapp_webhook`    | GET: Meta verification handshake. POST: inbound WhatsApp messages (HMAC-signed) |
+
+## WhatsApp integration
+
+Inbound messages arrive via a webhook at `/webhook/whatsapp/`:
+signature-verified (`X-Hub-Signature-256`), resolved to a
+Tenant/EndUser/Conversation, persisted as a `Message` with dedupe on
+`whatsapp_message_id`, then acked fast with a placeholder log (real
+processing is queued in Sprint 4's Celery pipeline). See
+[`docs/whatsapp-setup.md`](docs/whatsapp-setup.md) for how to stand up
+a test Meta App/WABA and connect it to this webhook.
 
 ## Data model
 
