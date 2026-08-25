@@ -1,16 +1,18 @@
 import datetime
+import threading
 from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 import pytest
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.utils import timezone
 
 from bookings.availability import TimeSlot, check_availability, compute_available_slots
 from bookings.models import BlockedDate, Booking, Service
 from bookings.services import SlotUnavailableError, create_booking
 from conversations.models import EndUser
+from tenants.models import Tenant
 
 
 @pytest.fixture
@@ -219,3 +221,41 @@ def test_create_booking_raises_clear_error_on_duplicate_slot(tenant, end_user, s
 
     with pytest.raises(SlotUnavailableError):
         create_booking(tenant, end_user, slot, service)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_create_booking_concurrent_requests_only_one_succeeds():
+    # transaction=True (real commits, separate connections per thread) so
+    # this genuinely exercises overlapping database transactions - not just
+    # two sequential calls, which the DB-level constraint alone can't prove
+    # is race-safe. Built inline rather than via the `tenant`/`end_user`
+    # fixtures, which depend on the plain `db` fixture and would conflict
+    # with `transaction=True` on the same test.
+    tenant = Tenant.objects.create(business_name="Concurrency Test", vertical=Tenant.Vertical.OTHER)
+    end_user = EndUser.objects.create(tenant=tenant, phone_number="+15550001234")
+    service = Service.objects.create(tenant=tenant, name="Consult", duration_minutes=30)
+    start = timezone.now() + datetime.timedelta(days=1)
+    slot = TimeSlot(start=start, end=start + datetime.timedelta(minutes=30))
+
+    barrier = threading.Barrier(2)
+    results = []
+
+    def attempt():
+        barrier.wait()
+        try:
+            results.append(("ok", create_booking(tenant, end_user, slot, service)))
+        except SlotUnavailableError as exc:
+            results.append(("error", exc))
+        finally:
+            connection.close()
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    outcomes = [outcome for outcome, _ in results]
+    assert outcomes.count("ok") == 1
+    assert outcomes.count("error") == 1
+    assert Booking.objects.filter(tenant=tenant, scheduled_start=start).count() == 1
