@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 from django.utils import timezone
 
-SLOT_DURATION_MINUTES = 30
+DEFAULT_SEARCH_DAYS = 7
 
 
 @dataclass
@@ -71,16 +71,14 @@ def compute_available_slots(tenant, service, date_range):
     return slots
 
 
-def check_availability(tenant, date_range=None):
-    """STUB: returns 3 hardcoded future slots regardless of input.
+def check_availability(tenant, date_range=None, service=None):
+    """Real computation, replacing the earlier Phase 3 hardcoded stub.
 
-    Real calendar-based computation replaces this in a later phase.
+    date_range defaults to a DEFAULT_SEARCH_DAYS window starting today, in
+    the tenant's own timezone.
     """
-    base = timezone.now().replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    return [
-        TimeSlot(
-            start=base + timedelta(days=offset),
-            end=base + timedelta(days=offset, minutes=SLOT_DURATION_MINUTES),
-        )
-        for offset in range(3)
-    ]
+    if date_range is None:
+        tz = ZoneInfo(tenant.timezone)
+        today = timezone.now().astimezone(tz).date()
+        date_range = (today, today + timedelta(days=DEFAULT_SEARCH_DAYS - 1))
+    return compute_available_slots(tenant, service, date_range)

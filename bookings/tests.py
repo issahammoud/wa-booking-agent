@@ -91,18 +91,28 @@ def test_blocked_date_unique_per_tenant(tenant):
         BlockedDate.objects.create(tenant=tenant, date=today)
 
 
-def test_check_availability_returns_consistent_fake_slots(tenant):
-    slots = check_availability(tenant)
+def test_check_availability_defaults_to_empty_when_no_working_hours(tenant):
+    # tenant fixture has working_hours={} (the model default) - closed every
+    # day until explicitly configured, never a guessed/open-by-default set.
+    assert check_availability(tenant) == []
 
-    assert len(slots) == 3
-    now = timezone.now()
+
+def test_check_availability_returns_real_computed_slots(tenant):
+    tenant.working_hours = {"mon": ["09:00", "12:00"]}
+    tenant.timezone = "Europe/Paris"
+    tenant.save()
+
+    today = timezone.now().date()
+    days_ahead = (0 - today.weekday()) % 7 or 7
+    monday = today + datetime.timedelta(days=days_ahead)
+
+    slots = check_availability(tenant, date_range=(monday, monday))
+
+    assert len(slots) == 6
     for slot in slots:
-        assert slot.start > now
-        assert slot.end > slot.start
         assert (slot.end - slot.start) == datetime.timedelta(minutes=30)
-    # Ordered, non-overlapping.
     for earlier, later in pairwise(slots):
-        assert later.start > earlier.end
+        assert later.start >= earlier.end
 
 
 def test_create_booking_creates_confirmed_booking(tenant, end_user, service):
