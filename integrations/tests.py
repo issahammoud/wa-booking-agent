@@ -1,12 +1,32 @@
 import hashlib
 import hmac
 import json
+from unittest.mock import Mock, patch
 
+import pytest
+import requests
 from django.urls import reverse
 
+from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
+from integrations.whatsapp_client import send_text_message
 
 MINIMAL_PAYLOAD = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
+
+
+@pytest.fixture(autouse=True)
+def _no_real_celery_dispatch():
+    """Prevent every webhook test in this module from leaking a real
+    countdown task into the broker - schedule_buffer_check() calls
+    check_and_drain_buffer.apply_async() for real on any successfully
+    persisted inbound message. Without this, that task fires later (after
+    the test's DB transaction has rolled back) against a live dev Celery
+    worker, producing "missing tenant/end_user" error noise. Buffer pushes
+    themselves are unaffected - only the broker dispatch is stubbed.
+    """
+    with patch("conversations.tasks.check_and_drain_buffer.apply_async"):
+        yield
+
 
 # Based on Meta's documented WhatsApp Cloud API webhook payload format.
 SAMPLE_MESSAGE_PAYLOAD = {
@@ -176,20 +196,61 @@ def test_webhook_dedupes_on_replayed_whatsapp_message_id(client, settings, tenan
     assert Message.objects.filter(whatsapp_message_id="wamid.sample-1").count() == 1
 
 
-def test_webhook_logs_processing_placeholder_only_for_new_messages(
-    client, settings, tenant, caplog
-):
+def test_webhook_buffers_new_message_but_not_a_duplicate(client, settings, tenant, caplog):
     settings.WHATSAPP_APP_SECRET = "app-secret"
     tenant.phone_number_id = "123456123"
     tenant.save()
 
-    with caplog.at_level("INFO"):
-        _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
-    assert "Would enqueue processing" in caplog.text
+    _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+    message = Message.objects.get(whatsapp_message_id="wamid.sample-1")
+    end_user = EndUser.objects.get(tenant=tenant, phone_number="16315551181")
+    assert buffer.peek(tenant.id, end_user.id) == [message.id]
 
-    caplog.clear()
     with caplog.at_level("INFO"):
         response = _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
     assert response.status_code == 200
-    assert "Would enqueue processing" not in caplog.text
     assert "Duplicate webhook message" in caplog.text
+    # Still just the one buffered id - the duplicate was never scheduled.
+    assert buffer.peek(tenant.id, end_user.id) == [message.id]
+
+    buffer.drain(tenant.id, end_user.id)
+
+
+def test_send_text_message_posts_expected_shape(tenant):
+    tenant.phone_number_id = "123456123"
+    tenant.whatsapp_access_token = b"real-token"
+    tenant.save()
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"messages": [{"id": "wamid.outbound-1"}]}
+    mock_response.raise_for_status.return_value = None
+
+    with patch("integrations.whatsapp_client.requests.post", return_value=mock_response) as post:
+        result = send_text_message(tenant, "16315551181", "Hi there")
+
+    assert result == {"messages": [{"id": "wamid.outbound-1"}]}
+    args, kwargs = post.call_args
+    assert args[0] == "https://graph.facebook.com/v21.0/123456123/messages"
+    assert kwargs["headers"] == {"Authorization": "Bearer real-token"}
+    assert kwargs["json"] == {
+        "messaging_product": "whatsapp",
+        "to": "16315551181",
+        "type": "text",
+        "text": {"body": "Hi there"},
+    }
+
+
+def test_send_text_message_returns_none_on_failure(tenant, caplog):
+    tenant.phone_number_id = "123456123"
+    tenant.whatsapp_access_token = b"real-token"
+    tenant.save()
+
+    with patch(
+        "integrations.whatsapp_client.requests.post",
+        side_effect=requests.ConnectionError("boom"),
+    ):
+        with caplog.at_level("ERROR"):
+            result = send_text_message(tenant, "16315551181", "Hi there")
+
+    assert result is None
+    assert "Failed to send WhatsApp message" in caplog.text

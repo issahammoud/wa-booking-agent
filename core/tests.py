@@ -5,9 +5,18 @@ from django.apps import apps
 from django.db.utils import OperationalError
 from django.urls import reverse
 
+from core.tasks import log_test_task
+
 
 def test_core_app_is_registered():
     assert apps.is_installed("core")
+
+
+def test_log_test_task_runs_and_returns_message(caplog):
+    with caplog.at_level("INFO"):
+        result = log_test_task.apply(args=["hello from test"])
+    assert result.result == "hello from test"
+    assert "hello from test" in caplog.text
 
 
 def test_health_check_returns_200_when_healthy(client):
