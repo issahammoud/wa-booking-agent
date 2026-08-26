@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import UTC, date, datetime, time
 
 
 def decode_token(token):
@@ -8,6 +9,14 @@ def decode_token(token):
     if isinstance(token, bytes | memoryview):
         return bytes(token).decode()
     return token
+
+
+def auth_header(connection):
+    return {"Authorization": f"Bearer {decode_token(connection.access_token)}"}
+
+
+def day_bound(day: date, bound_time: time) -> datetime:
+    return datetime.combine(day, bound_time, tzinfo=UTC)
 
 
 class CalendarProvider(ABC):

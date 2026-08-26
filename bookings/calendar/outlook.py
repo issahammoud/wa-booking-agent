@@ -1,9 +1,9 @@
-from datetime import UTC, date, datetime, time
+from datetime import UTC, datetime, time
 
 import requests
 
 from bookings.availability import TimeSlot
-from bookings.calendar.base import CalendarProvider, decode_token
+from bookings.calendar.base import CalendarProvider, auth_header, day_bound
 
 CALENDAR_VIEW_URL = "https://graph.microsoft.com/v1.0/me/calendarView"
 EVENTS_URL = "https://graph.microsoft.com/v1.0/me/events"
@@ -19,10 +19,10 @@ class OutlookCalendarProvider(CalendarProvider):
         start_date, end_date = date_range
         response = requests.get(
             CALENDAR_VIEW_URL,
-            headers={**_auth_header(connection), "Prefer": 'outlook.timezone="UTC"'},
+            headers={**auth_header(connection), "Prefer": 'outlook.timezone="UTC"'},
             params={
-                "startDateTime": _day_bound(start_date, time.min).isoformat(),
-                "endDateTime": _day_bound(end_date, time.max).isoformat(),
+                "startDateTime": day_bound(start_date, time.min).isoformat(),
+                "endDateTime": day_bound(end_date, time.max).isoformat(),
             },
             timeout=10,
         )
@@ -39,7 +39,7 @@ class OutlookCalendarProvider(CalendarProvider):
     def create_event(self, connection, slot, summary):
         response = requests.post(
             EVENTS_URL,
-            headers=_auth_header(connection),
+            headers=auth_header(connection),
             json={
                 "subject": summary,
                 "start": {"dateTime": _utc_naive_iso(slot.start), "timeZone": "UTC"},
@@ -49,14 +49,6 @@ class OutlookCalendarProvider(CalendarProvider):
         )
         response.raise_for_status()
         return response.json()["id"]
-
-
-def _auth_header(connection):
-    return {"Authorization": f"Bearer {decode_token(connection.access_token)}"}
-
-
-def _day_bound(day: date, bound_time: time) -> datetime:
-    return datetime.combine(day, bound_time, tzinfo=UTC)
 
 
 def _utc_naive_iso(dt: datetime) -> str:
