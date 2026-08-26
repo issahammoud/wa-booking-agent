@@ -48,6 +48,18 @@ def compute_available_slots(tenant, service, date_range):
         )
     ]
 
+    # Booking is always the source of truth (also covers a Booking created
+    # while the external write failed) - a connected calendar only ever adds
+    # more busy time on top, never replaces this.
+    connection = getattr(tenant, "calendar_connection", None)
+    if connection is not None:
+        from bookings.calendar import get_provider
+
+        busy_intervals.extend(
+            (slot.start - buffer_delta, slot.end + buffer_delta)
+            for slot in get_provider(connection).get_busy_intervals(connection, date_range)
+        )
+
     now = timezone.now()
     slots = []
     current_date = start_date

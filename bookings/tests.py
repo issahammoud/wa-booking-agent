@@ -1,6 +1,7 @@
 import datetime
 import threading
 from itertools import pairwise
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -12,6 +13,7 @@ from bookings.availability import TimeSlot, check_availability, compute_availabl
 from bookings.models import BlockedDate, Booking, Service
 from bookings.services import SlotUnavailableError, create_booking
 from conversations.models import EndUser
+from integrations.models import CalendarConnection
 from tenants.models import Tenant
 
 
@@ -197,6 +199,85 @@ def test_compute_available_slots_uses_tenant_timezone_not_utc(tenant):
     slot = slots[0]
     assert slot.start.astimezone(ZoneInfo("America/New_York")).hour == 9
     assert slot.start.astimezone(datetime.UTC).hour != 9
+
+
+@pytest.fixture
+def calendar_connection(tenant):
+    return CalendarConnection.objects.create(
+        tenant=tenant,
+        provider="google",
+        external_calendar_id="primary",
+        access_token=b"fake-token",
+        refresh_token=b"fake-refresh",
+        token_expires_at=timezone.now() + datetime.timedelta(hours=1),
+    )
+
+
+def test_compute_available_slots_excludes_external_busy_time_when_connected(
+    tenant, calendar_connection
+):
+    tenant.working_hours = {"mon": ["09:00", "10:00"]}
+    tenant.timezone = "Europe/Paris"
+    tenant.save()
+    monday = _next_monday()
+    tz = ZoneInfo("Europe/Paris")
+    external_busy = TimeSlot(
+        start=datetime.datetime(monday.year, monday.month, monday.day, 9, 0, tzinfo=tz),
+        end=datetime.datetime(monday.year, monday.month, monday.day, 9, 30, tzinfo=tz),
+    )
+
+    # No Booking rows at all - this busy time exists only on the external
+    # calendar, proving it's genuinely additive, not derived from Booking.
+    with patch("bookings.calendar.get_provider") as mock_get_provider:
+        mock_get_provider.return_value.get_busy_intervals.return_value = [external_busy]
+        slots = compute_available_slots(tenant, None, (monday, monday))
+
+    assert slots == [
+        TimeSlot(
+            start=datetime.datetime(monday.year, monday.month, monday.day, 9, 30, tzinfo=tz),
+            end=datetime.datetime(monday.year, monday.month, monday.day, 10, 0, tzinfo=tz),
+        )
+    ]
+
+
+def test_compute_available_slots_unaffected_when_no_calendar_connected(tenant):
+    tenant.working_hours = {"mon": ["09:00", "10:00"]}
+    tenant.timezone = "Europe/Paris"
+    tenant.save()
+    monday = _next_monday()
+
+    slots = compute_available_slots(tenant, None, (monday, monday))
+
+    assert len(slots) == 2
+
+
+def test_create_booking_syncs_to_connected_external_calendar(
+    tenant, end_user, service, calendar_connection
+):
+    start = timezone.now() + datetime.timedelta(days=1)
+    slot = TimeSlot(start=start, end=start + datetime.timedelta(minutes=30))
+
+    with patch("bookings.calendar.get_provider") as mock_get_provider:
+        mock_get_provider.return_value.create_event.return_value = "external-id-123"
+        booking = create_booking(tenant, end_user, slot, service)
+
+    booking.refresh_from_db()
+    assert booking.external_event_id == "external-id-123"
+
+
+def test_create_booking_survives_external_sync_failure(
+    tenant, end_user, service, calendar_connection
+):
+    start = timezone.now() + datetime.timedelta(days=1)
+    slot = TimeSlot(start=start, end=start + datetime.timedelta(minutes=30))
+
+    with patch("bookings.calendar.get_provider") as mock_get_provider:
+        mock_get_provider.return_value.create_event.side_effect = Exception("API down")
+        booking = create_booking(tenant, end_user, slot, service)
+
+    booking.refresh_from_db()
+    assert booking.status == Booking.Status.CONFIRMED
+    assert booking.external_event_id == ""
 
 
 def test_create_booking_creates_confirmed_booking(tenant, end_user, service):

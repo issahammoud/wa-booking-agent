@@ -1,6 +1,10 @@
+import logging
+
 from django.db import IntegrityError, transaction
 
 from bookings.models import Booking
+
+logger = logging.getLogger(__name__)
 
 
 class SlotUnavailableError(Exception):
@@ -19,7 +23,7 @@ class SlotUnavailableError(Exception):
 def create_booking(tenant, end_user, slot, service):
     try:
         with transaction.atomic():
-            return Booking.objects.create(
+            booking = Booking.objects.create(
                 tenant=tenant,
                 end_user=end_user,
                 service=service,
@@ -31,3 +35,27 @@ def create_booking(tenant, end_user, slot, service):
         raise SlotUnavailableError(
             f"Slot {slot.start} is already booked for tenant {tenant.id}"
         ) from exc
+
+    # Outside the transaction: a slow/failed external call shouldn't hold a
+    # DB lock, and a failed sync is a recoverable follow-up, not a reason to
+    # fail a booking that's already confirmed locally (same failure-tolerance
+    # precedent as the outbound WhatsApp send policy in Sprint 4).
+    connection = getattr(tenant, "calendar_connection", None)
+    if connection is not None:
+        from bookings.calendar import get_provider
+
+        try:
+            external_event_id = get_provider(connection).create_event(
+                connection, slot, summary=f"Booking: {service.name if service else 'Appointment'}"
+            )
+        except Exception:
+            logger.exception(
+                "Failed to sync booking id=%s to external calendar for tenant=%s",
+                booking.id,
+                tenant.id,
+            )
+        else:
+            booking.external_event_id = external_event_id
+            booking.save(update_fields=["external_event_id"])
+
+    return booking
