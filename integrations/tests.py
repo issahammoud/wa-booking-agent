@@ -12,7 +12,8 @@ from conversations.models import Conversation, EndUser, Message
 from conversations.tasks import check_and_drain_buffer
 from integrations.agent.mock import MockAgent
 from integrations.agent.tools import ask_clarification, execute_tool
-from integrations.whatsapp_client import send_text_message
+from integrations.transcription import transcribe_audio
+from integrations.whatsapp_client import download_media, send_text_message
 
 MINIMAL_PAYLOAD = json.dumps({"object": "whatsapp_business_account", "entry": []}).encode()
 
@@ -334,3 +335,129 @@ def test_full_pipeline_inbound_booking_message_to_outbound_reply(client, setting
     outbound = conversation.messages.get(direction=Message.Direction.OUTBOUND)
     assert outbound.content == reply_text
     assert outbound.whatsapp_message_id == "wamid.pipeline-reply-1"
+
+
+def test_download_media_fetches_signed_url_then_content(tenant):
+    tenant.whatsapp_access_token = b"real-token"
+    tenant.save()
+
+    meta_response = Mock()
+    meta_response.raise_for_status.return_value = None
+    meta_response.json.return_value = {"url": "https://lookaside.example/media/abc"}
+
+    content_response = Mock()
+    content_response.raise_for_status.return_value = None
+    content_response.content = b"raw-audio-bytes"
+
+    with patch(
+        "integrations.whatsapp_client.requests.get",
+        side_effect=[meta_response, content_response],
+    ) as mock_get:
+        result = download_media(tenant, "media-id-123")
+
+    assert result == b"raw-audio-bytes"
+    first_call, second_call = mock_get.call_args_list
+    assert first_call.args[0] == "https://graph.facebook.com/v21.0/media-id-123"
+    assert second_call.args[0] == "https://lookaside.example/media/abc"
+    assert first_call.kwargs["headers"] == {"Authorization": "Bearer real-token"}
+    assert second_call.kwargs["headers"] == {"Authorization": "Bearer real-token"}
+
+
+def test_download_media_returns_none_on_failure(tenant, caplog):
+    tenant.whatsapp_access_token = b"real-token"
+    tenant.save()
+
+    with patch(
+        "integrations.whatsapp_client.requests.get",
+        side_effect=requests.ConnectionError("boom"),
+    ):
+        with caplog.at_level("ERROR"):
+            result = download_media(tenant, "media-id-123")
+
+    assert result is None
+    assert "Failed to download media" in caplog.text
+
+
+def test_transcribe_audio_returns_text_on_success(settings):
+    settings.OPENROUTER_API_KEY = "or-key"
+    settings.TRANSCRIPTION_MODEL = "openai/whisper-1"
+
+    fake_response = Mock()
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.return_value = {"text": "Hello, I need an appointment"}
+
+    with patch("integrations.transcription.requests.post", return_value=fake_response) as mock_post:
+        result = transcribe_audio(b"fake-audio-bytes")
+
+    assert result == "Hello, I need an appointment"
+    kwargs = mock_post.call_args.kwargs
+    assert kwargs["headers"] == {"Authorization": "Bearer or-key"}
+    assert kwargs["json"]["model"] == "openai/whisper-1"
+    assert kwargs["json"]["input_audio"]["format"] == "ogg"
+
+
+def test_transcribe_audio_returns_none_on_failure(caplog):
+    with patch(
+        "integrations.transcription.requests.post",
+        side_effect=requests.ConnectionError("boom"),
+    ):
+        with caplog.at_level("ERROR"):
+            result = transcribe_audio(b"fake-audio-bytes")
+
+    assert result is None
+    assert "Audio transcription failed" in caplog.text
+
+
+def test_webhook_transcribes_audio_message_before_buffering(client, settings, tenant):
+    settings.WHATSAPP_APP_SECRET = "app-secret"
+    tenant.phone_number_id = "123456123"
+    tenant.save()
+
+    audio_payload = json.loads(json.dumps(SAMPLE_MESSAGE_PAYLOAD))
+    inner_message = audio_payload["entry"][0]["changes"][0]["value"]["messages"][0]
+    inner_message["id"] = "wamid.audio-1"
+    inner_message["type"] = "audio"
+    inner_message["audio"] = {"id": "meta-media-id-1"}
+    del inner_message["text"]
+
+    with (
+        patch("integrations.views.download_media", return_value=b"raw-bytes") as mock_download,
+        patch(
+            "integrations.views.transcribe_audio", return_value="Book me a consultation"
+        ) as mock_transcribe,
+    ):
+        response = _post_webhook(client, audio_payload, "app-secret")
+
+    assert response.status_code == 200
+    mock_download.assert_called_once_with(tenant, "meta-media-id-1")
+    mock_transcribe.assert_called_once_with(b"raw-bytes")
+
+    message = Message.objects.get(whatsapp_message_id="wamid.audio-1")
+    assert message.message_type == "audio"
+    assert message.media_reference == "meta-media-id-1"
+    assert message.content == "Book me a consultation"
+
+
+def test_webhook_leaves_audio_content_empty_when_transcription_fails(client, settings, tenant):
+    settings.WHATSAPP_APP_SECRET = "app-secret"
+    tenant.phone_number_id = "123456123"
+    tenant.save()
+
+    audio_payload = json.loads(json.dumps(SAMPLE_MESSAGE_PAYLOAD))
+    inner_message = audio_payload["entry"][0]["changes"][0]["value"]["messages"][0]
+    inner_message["id"] = "wamid.audio-2"
+    inner_message["type"] = "audio"
+    inner_message["audio"] = {"id": "meta-media-id-2"}
+    del inner_message["text"]
+
+    with (
+        patch("integrations.views.download_media", return_value=None),
+        patch("integrations.views.transcribe_audio") as mock_transcribe,
+    ):
+        response = _post_webhook(client, audio_payload, "app-secret")
+
+    assert response.status_code == 200
+    mock_transcribe.assert_not_called()
+
+    message = Message.objects.get(whatsapp_message_id="wamid.audio-2")
+    assert message.content == ""
