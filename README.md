@@ -61,6 +61,24 @@ Requires Docker and Docker Compose.
 Run `make help` to see every available target, including `down` and
 `shell`.
 
+## Onboarding a new tenant
+
+There's no onboarding wizard yet - a deliberate placeholder for a future
+doctor-facing flow. For now, a `platform_admin` (a superuser - see
+`createsuperuser` above) onboards a new pilot tenant entirely through
+`/admin/`, no code changes needed:
+
+1. **Tenants > Add tenant**: business name, vertical, timezone, and
+   `working_hours` (a JSON dict like `{"mon": ["09:00", "17:00"]}` -
+   defaults to `{}`, i.e. closed every day, until set).
+2. **Services > Add service**: one row per bookable service for that
+   tenant (name, duration).
+3. **Staff users > Add staff user**: a username/password tied to that
+   tenant with `role=owner` (or `staff`). This account does **not** need
+   `is_staff` checked - that flag only gates `/admin/` access, which
+   tenant staff shouldn't need. They log in at `/login/` and land on
+   their tenant's dashboard, scoped to only their own data.
+
 ## Running tests and linters
 
 ```sh
