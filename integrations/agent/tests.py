@@ -1,13 +1,18 @@
+import datetime
 import json
 from unittest.mock import Mock, patch
 
 import pytest
 import requests
+from django.utils import timezone
 
+from bookings.models import Booking, Service
 from conversations.models import Conversation, EndUser, Message
 from integrations.agent import get_agent
 from integrations.agent.mock import MockAgent
 from integrations.agent.openrouter import FALLBACK_REPLY, OpenRouterAgent
+from integrations.agent.prompts import build_system_prompt
+from integrations.agent.tools import execute_tool
 
 
 @pytest.fixture
@@ -124,3 +129,77 @@ def test_openrouter_agent_falls_back_on_request_failure(conversation):
 
     assert result.action == "reply"
     assert result.text == FALLBACK_REPLY
+
+
+@pytest.fixture
+def service(tenant):
+    return Service.objects.create(tenant=tenant, name="Consultation", duration_minutes=30)
+
+
+def test_create_booking_tool_confirms_valid_request(tenant, conversation, service):
+    start = timezone.now() + datetime.timedelta(days=1)
+    result = execute_tool(
+        "create_booking",
+        tenant,
+        conversation,
+        {"service_name": "Consultation", "start_time": start.isoformat()},
+    )
+
+    assert result["status"] == "confirmed"
+    assert isinstance(result["booking"], Booking)
+    assert result["booking"].end_user == conversation.end_user
+    assert result["booking"].service == service
+
+
+def test_create_booking_tool_errors_on_unknown_service(tenant, conversation):
+    start = timezone.now() + datetime.timedelta(days=1)
+    result = execute_tool(
+        "create_booking",
+        tenant,
+        conversation,
+        {"service_name": "Not A Real Service", "start_time": start.isoformat()},
+    )
+
+    assert result["status"] == "error"
+
+
+def test_create_booking_tool_errors_on_unparseable_time(tenant, conversation, service):
+    result = execute_tool(
+        "create_booking",
+        tenant,
+        conversation,
+        {"service_name": "Consultation", "start_time": "not a real date"},
+    )
+
+    assert result["status"] == "error"
+
+
+def test_create_booking_tool_errors_when_slot_already_taken(tenant, conversation, service):
+    start = timezone.now() + datetime.timedelta(days=1)
+    Booking.objects.create(
+        tenant=tenant,
+        end_user=conversation.end_user,
+        service=service,
+        scheduled_start=start,
+        scheduled_end=start + datetime.timedelta(minutes=30),
+    )
+
+    result = execute_tool(
+        "create_booking",
+        tenant,
+        conversation,
+        {"service_name": "Consultation", "start_time": start.isoformat()},
+    )
+
+    assert result["status"] == "error"
+
+
+def test_build_system_prompt_states_working_hours_when_configured(tenant):
+    tenant.working_hours = {"mon": ["09:00", "17:00"]}
+    tenant.save()
+    assert "Mon 09:00-17:00" in build_system_prompt(tenant)
+
+
+def test_build_system_prompt_avoids_guessing_hours_when_unconfigured(tenant):
+    prompt = build_system_prompt(tenant)
+    assert "not yet configured" in prompt

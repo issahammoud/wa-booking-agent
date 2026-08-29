@@ -142,6 +142,16 @@ def test_successful_reply_logged_as_outbound_message_after_inbound(tenant, end_u
 
 
 def test_tool_call_reply_describes_available_slots(tenant, end_user):
+    tenant.working_hours = {
+        "mon": ["09:00", "17:00"],
+        "tue": ["09:00", "17:00"],
+        "wed": ["09:00", "17:00"],
+        "thu": ["09:00", "17:00"],
+        "fri": ["09:00", "17:00"],
+        "sat": ["09:00", "17:00"],
+        "sun": ["09:00", "17:00"],
+    }
+    tenant.save()
     conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
     inbound = _inbound(conversation, "I'd like to book an appointment", "wamid.booking-1")
 

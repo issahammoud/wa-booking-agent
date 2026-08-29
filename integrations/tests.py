@@ -282,18 +282,18 @@ def test_ask_clarification_returns_text_unchanged():
 def test_execute_tool_dispatches_check_availability(tenant):
     # tenant fixture has no working_hours configured - real computation
     # correctly returns no slots rather than a hardcoded fake count.
-    result = execute_tool("check_availability", tenant, {})
+    result = execute_tool("check_availability", tenant, None, {})
     assert result == []
 
 
 def test_execute_tool_dispatches_ask_clarification(tenant):
-    result = execute_tool("ask_clarification", tenant, {"text": "Which day?"})
+    result = execute_tool("ask_clarification", tenant, None, {"question": "Which day?"})
     assert result == "Which day?"
 
 
 def test_execute_tool_raises_on_unknown_tool(tenant):
     with pytest.raises(ValueError, match="Unknown tool"):
-        execute_tool("not_a_real_tool", tenant, {})
+        execute_tool("not_a_real_tool", tenant, None, {})
 
 
 def test_full_pipeline_inbound_booking_message_to_outbound_reply(client, settings, tenant):
@@ -305,6 +305,8 @@ def test_full_pipeline_inbound_booking_message_to_outbound_reply(client, setting
     """
     settings.WHATSAPP_APP_SECRET = "app-secret"
     tenant.phone_number_id = "123456123"
+    all_days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    tenant.working_hours = {day: ["09:00", "17:00"] for day in all_days}
     tenant.save()
 
     booking_payload = json.loads(json.dumps(SAMPLE_MESSAGE_PAYLOAD))
