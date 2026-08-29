@@ -14,13 +14,14 @@ Redis transaction, not this timestamp check (see that module for why).
 """
 
 import logging
+from zoneinfo import ZoneInfo
 
 from celery import shared_task
 from django.conf import settings
 
 from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
-from integrations.agent.mock import MockAgent
+from integrations.agent import get_agent
 from integrations.agent.tools import execute_tool
 from integrations.whatsapp_client import send_text_message
 from tenants.models import Tenant
@@ -58,7 +59,9 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
 
     conversation = (
         Conversation.objects.filter(
-            tenant=tenant, end_user=end_user, status=Conversation.Status.ACTIVE
+            tenant=tenant,
+            end_user=end_user,
+            status__in=[Conversation.Status.ACTIVE, Conversation.Status.AWAITING_USER],
         )
         .order_by("-last_message_at")
         .first()
@@ -67,7 +70,7 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
         # Shouldn't happen in the real flow (the webhook always gets/creates
         # one before scheduling a check) - defensive, not expected.
         logger.error(
-            "Buffer drained but no active conversation for tenant=%s end_user=%s",
+            "Buffer drained but no active/awaiting conversation for tenant=%s end_user=%s",
             tenant_id,
             end_user_id,
         )
@@ -104,18 +107,29 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
 
 
 def _get_reply_text(tenant, conversation, messages):
-    response = MockAgent().respond(conversation, messages)
+    response = get_agent().respond(conversation, messages)
     if response.action == "reply":
         return response.text
 
-    tool_result = execute_tool(response.tool, tenant, response.tool_args)
+    tool_result = execute_tool(response.tool, tenant, conversation, response.tool_args)
     return _format_tool_result(response.tool, tool_result)
 
 
 def _format_tool_result(tool_name, result):
-    # Deliberately simple - a real agent (later sprint) replaces this with
-    # an actual conversational response built from the tool's result.
     if tool_name == "check_availability":
+        if not result:
+            return "Sorry, I don't see any open slots in the next few days."
         slots = ", ".join(slot.start.strftime("%a %b %d, %H:%M") for slot in result)
         return f"Here are some available times: {slots}"
+    if tool_name == "create_booking":
+        return _format_booking_result(result)
     return str(result)
+
+
+def _format_booking_result(result):
+    if result["status"] != "confirmed":
+        return result["message"]
+    booking = result["booking"]
+    local_start = booking.scheduled_start.astimezone(ZoneInfo(booking.tenant.timezone))
+    service_name = booking.service.name if booking.service else "your appointment"
+    return f"You're booked for {service_name} on {local_start.strftime('%a %b %d, %H:%M')}."

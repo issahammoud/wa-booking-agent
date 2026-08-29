@@ -11,6 +11,8 @@ from django.views.decorators.http import require_http_methods
 
 from conversations.models import Conversation, EndUser, Message
 from conversations.tasks import schedule_buffer_check
+from integrations.transcription import transcribe_audio
+from integrations.whatsapp_client import download_media
 from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -60,7 +62,7 @@ def _persist_message(message, conversation):
 
     try:
         with transaction.atomic():
-            return Message.objects.create(
+            saved_message = Message.objects.create(
                 conversation=conversation,
                 direction=Message.Direction.INBOUND,
                 message_type=message_type,
@@ -72,6 +74,26 @@ def _persist_message(message, conversation):
     except IntegrityError:
         logger.info("Duplicate webhook message id=%s, ignoring", message.get("id"))
         return None
+
+    if message_type == "audio":
+        # Synchronous in the webhook request, before this message ever
+        # reaches the debounce buffer - the agent must see real text, not
+        # a placeholder. A known latency tradeoff for this first pass; a
+        # follow-up could move this into a Celery task ahead of the buffer
+        # push if it becomes a real problem.
+        _transcribe_and_store(conversation.tenant, saved_message)
+
+    return saved_message
+
+
+def _transcribe_and_store(tenant, message):
+    audio_bytes = download_media(tenant, message.media_reference)
+    if audio_bytes is None:
+        return
+    transcript = transcribe_audio(audio_bytes)
+    if transcript:
+        message.content = transcript
+        message.save(update_fields=["content"])
 
 
 def _resolve_messages(payload):
@@ -105,10 +127,25 @@ def _resolve_messages(payload):
                     phone_number=sender,
                     defaults={"display_name": display_name},
                 )
-                conversation, _created = Conversation.objects.get_or_create(
-                    tenant=tenant, end_user=end_user, status=Conversation.Status.ACTIVE
-                )
+                conversation = _get_or_create_conversation(tenant, end_user)
                 yield message, tenant, end_user, conversation
+
+
+def _get_or_create_conversation(tenant, end_user):
+    """The most recent still-open conversation (active, or awaiting the
+    user's reply mid slot-filling), or a new active one if none exists."""
+    conversation = (
+        Conversation.objects.filter(
+            tenant=tenant,
+            end_user=end_user,
+            status__in=[Conversation.Status.ACTIVE, Conversation.Status.AWAITING_USER],
+        )
+        .order_by("-last_message_at")
+        .first()
+    )
+    if conversation is not None:
+        return conversation
+    return Conversation.objects.create(tenant=tenant, end_user=end_user)
 
 
 def _has_valid_signature(request):

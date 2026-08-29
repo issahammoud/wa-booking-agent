@@ -38,3 +38,32 @@ def send_text_message(tenant, to_phone_number, text):
         )
         return None
     return response.json()
+
+
+def download_media(tenant, media_id):
+    """Download a media attachment (e.g. a voice note) from the WhatsApp
+    Cloud API. Two-step Graph API flow: resolve the media id to a short-
+    lived signed URL, then fetch that URL with the same bearer token.
+
+    Returns the raw bytes on success, or None on failure - never raises.
+    """
+    access_token = tenant.whatsapp_access_token
+    if isinstance(access_token, bytes | memoryview):
+        access_token = bytes(access_token).decode()
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    try:
+        meta_response = requests.get(
+            f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{media_id}",
+            headers=headers,
+            timeout=10,
+        )
+        meta_response.raise_for_status()
+        media_url = meta_response.json()["url"]
+
+        content_response = requests.get(media_url, headers=headers, timeout=10)
+        content_response.raise_for_status()
+    except (requests.RequestException, KeyError):
+        logger.exception("Failed to download media id=%s for tenant=%s", media_id, tenant.id)
+        return None
+    return content_response.content
