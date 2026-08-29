@@ -32,12 +32,17 @@ class OpenRouterAgent:
             for message in conversation.messages.order_by("created_at")
             if message.content
         ]
+        system_content = build_system_prompt(conversation.tenant)
+        if conversation.pending_intent_state:
+            system_content += (
+                "\n\nBooking details already confirmed earlier in this conversation "
+                f"(don't ask for these again unless something changed): "
+                f"{json.dumps(conversation.pending_intent_state)}"
+            )
+
         payload = {
             "model": settings.AGENT_MODEL,
-            "messages": [
-                {"role": "system", "content": build_system_prompt(conversation.tenant)},
-                *history,
-            ],
+            "messages": [{"role": "system", "content": system_content}, *history],
             "tools": TOOL_SCHEMAS,
         }
         headers = {"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"}

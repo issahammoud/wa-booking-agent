@@ -59,7 +59,9 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
 
     conversation = (
         Conversation.objects.filter(
-            tenant=tenant, end_user=end_user, status=Conversation.Status.ACTIVE
+            tenant=tenant,
+            end_user=end_user,
+            status__in=[Conversation.Status.ACTIVE, Conversation.Status.AWAITING_USER],
         )
         .order_by("-last_message_at")
         .first()
@@ -68,7 +70,7 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
         # Shouldn't happen in the real flow (the webhook always gets/creates
         # one before scheduling a check) - defensive, not expected.
         logger.error(
-            "Buffer drained but no active conversation for tenant=%s end_user=%s",
+            "Buffer drained but no active/awaiting conversation for tenant=%s end_user=%s",
             tenant_id,
             end_user_id,
         )

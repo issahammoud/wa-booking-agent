@@ -287,3 +287,20 @@ def test_platform_admin_can_view_any_tenants_conversation_detail(
     response = client.get(reverse("conversation-detail", args=[other_conversation.pk]))
 
     assert response.status_code == 200
+
+
+def test_buffer_drain_reuses_awaiting_user_conversation(tenant, end_user):
+    conversation = Conversation.objects.create(
+        tenant=tenant, end_user=end_user, status=Conversation.Status.AWAITING_USER
+    )
+    inbound = _inbound(conversation, "Thursday afternoon works", "wamid.awaiting-1")
+
+    ts = buffer.push_message(tenant.id, end_user.id, inbound.id)
+    with patch(
+        "conversations.tasks.send_text_message",
+        return_value={"messages": [{"id": "wamid.awaiting-reply-1"}]},
+    ):
+        check_and_drain_buffer(tenant.id, end_user.id, ts)
+
+    assert Conversation.objects.filter(tenant=tenant, end_user=end_user).count() == 1
+    assert conversation.messages.filter(direction=Message.Direction.OUTBOUND).exists()

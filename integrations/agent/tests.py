@@ -83,6 +83,34 @@ def test_openrouter_agent_returns_reply_from_response(conversation):
     assert result.text == "Sure, happy to help!"
 
 
+def test_openrouter_agent_includes_pending_intent_state_when_present(conversation):
+    conversation.status = Conversation.Status.AWAITING_USER
+    conversation.pending_intent_state = {"service": "Consultation", "date": "Thursday"}
+    conversation.save()
+    fake_response = _fake_completion({"role": "assistant", "content": "What time works?"})
+
+    with patch(
+        "integrations.agent.openrouter.requests.post", return_value=fake_response
+    ) as mock_post:
+        OpenRouterAgent().respond(conversation, list(conversation.messages.all()))
+
+    system_content = mock_post.call_args.kwargs["json"]["messages"][0]["content"]
+    assert "Consultation" in system_content
+    assert "Thursday" in system_content
+
+
+def test_openrouter_agent_omits_pending_intent_note_when_empty(conversation):
+    fake_response = _fake_completion({"role": "assistant", "content": "Hi!"})
+
+    with patch(
+        "integrations.agent.openrouter.requests.post", return_value=fake_response
+    ) as mock_post:
+        OpenRouterAgent().respond(conversation, list(conversation.messages.all()))
+
+    system_content = mock_post.call_args.kwargs["json"]["messages"][0]["content"]
+    assert "already confirmed" not in system_content
+
+
 def test_openrouter_agent_sends_full_conversation_history(tenant, end_user):
     conv = Conversation.objects.create(tenant=tenant, end_user=end_user)
     Message.objects.create(
@@ -137,6 +165,10 @@ def service(tenant):
 
 
 def test_create_booking_tool_confirms_valid_request(tenant, conversation, service):
+    conversation.status = Conversation.Status.AWAITING_USER
+    conversation.pending_intent_state = {"service": "Consultation"}
+    conversation.save()
+
     start = timezone.now() + datetime.timedelta(days=1)
     result = execute_tool(
         "create_booking",
@@ -149,6 +181,10 @@ def test_create_booking_tool_confirms_valid_request(tenant, conversation, servic
     assert isinstance(result["booking"], Booking)
     assert result["booking"].end_user == conversation.end_user
     assert result["booking"].service == service
+
+    conversation.refresh_from_db()
+    assert conversation.status == Conversation.Status.ACTIVE
+    assert conversation.pending_intent_state == {}
 
 
 def test_create_booking_tool_errors_on_unknown_service(tenant, conversation):

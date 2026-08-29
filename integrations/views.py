@@ -127,10 +127,25 @@ def _resolve_messages(payload):
                     phone_number=sender,
                     defaults={"display_name": display_name},
                 )
-                conversation, _created = Conversation.objects.get_or_create(
-                    tenant=tenant, end_user=end_user, status=Conversation.Status.ACTIVE
-                )
+                conversation = _get_or_create_conversation(tenant, end_user)
                 yield message, tenant, end_user, conversation
+
+
+def _get_or_create_conversation(tenant, end_user):
+    """The most recent still-open conversation (active, or awaiting the
+    user's reply mid slot-filling), or a new active one if none exists."""
+    conversation = (
+        Conversation.objects.filter(
+            tenant=tenant,
+            end_user=end_user,
+            status__in=[Conversation.Status.ACTIVE, Conversation.Status.AWAITING_USER],
+        )
+        .order_by("-last_message_at")
+        .first()
+    )
+    if conversation is not None:
+        return conversation
+    return Conversation.objects.create(tenant=tenant, end_user=end_user)
 
 
 def _has_valid_signature(request):

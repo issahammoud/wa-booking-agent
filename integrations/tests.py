@@ -174,6 +174,24 @@ def test_webhook_reuses_existing_active_conversation(client, settings, tenant):
     assert Conversation.objects.filter(tenant=tenant, end_user=end_user).count() == 1
 
 
+def test_webhook_reuses_awaiting_user_conversation_mid_slot_filling(client, settings, tenant):
+    # A reply arriving while the agent is mid slot-filling (ask_clarification
+    # already set status=AWAITING_USER) must attach to that same conversation,
+    # not spawn a duplicate active one.
+    settings.WHATSAPP_APP_SECRET = "app-secret"
+    tenant.phone_number_id = "123456123"
+    tenant.save()
+    end_user = EndUser.objects.create(tenant=tenant, phone_number="16315551181")
+    conversation = Conversation.objects.create(
+        tenant=tenant, end_user=end_user, status=Conversation.Status.AWAITING_USER
+    )
+
+    _post_webhook(client, SAMPLE_MESSAGE_PAYLOAD, "app-secret")
+
+    assert Conversation.objects.filter(tenant=tenant, end_user=end_user).count() == 1
+    assert Message.objects.get(whatsapp_message_id="wamid.sample-1").conversation == conversation
+
+
 def test_webhook_persists_inbound_message(client, settings, tenant):
     settings.WHATSAPP_APP_SECRET = "app-secret"
     tenant.phone_number_id = "123456123"
@@ -288,8 +306,20 @@ def test_execute_tool_dispatches_check_availability(tenant):
 
 
 def test_execute_tool_dispatches_ask_clarification(tenant):
-    result = execute_tool("ask_clarification", tenant, None, {"question": "Which day?"})
+    end_user = EndUser.objects.create(tenant=tenant, phone_number="+15550002222")
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+
+    result = execute_tool(
+        "ask_clarification",
+        tenant,
+        conversation,
+        {"question": "Which day?", "known_slots": {"service": "Consultation"}},
+    )
+
     assert result == "Which day?"
+    conversation.refresh_from_db()
+    assert conversation.status == Conversation.Status.AWAITING_USER
+    assert conversation.pending_intent_state == {"service": "Consultation"}
 
 
 def test_execute_tool_raises_on_unknown_tool(tenant):

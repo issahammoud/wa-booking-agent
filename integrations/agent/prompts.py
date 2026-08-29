@@ -30,6 +30,8 @@ def build_system_prompt(tenant):
         "check availability or book (e.g. which service, which day/time) - never guess.",
         "- For anything else (general questions, greetings), just reply normally "
         "without calling a tool.",
+        "- If you say you will check or look something up, call the matching tool "
+        "in that same turn - never say you'll check without actually calling it.",
     ]
 
     extra_instructions = tenant.system_prompt_overrides.get("extra_instructions")

@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from bookings.availability import TimeSlot, check_availability
 from bookings.models import Service
 from bookings.services import SlotUnavailableError, create_booking
+from conversations.models import Conversation
 
 # OpenAI-compatible function-calling schemas (OpenRouter's chat completions
 # endpoint follows this shape regardless of the underlying model).
@@ -68,6 +69,14 @@ TOOL_SCHEMAS = [
                         "type": "string",
                         "description": "The question to send to the customer.",
                     },
+                    "known_slots": {
+                        "type": "object",
+                        "description": (
+                            "Booking details already confirmed in this conversation "
+                            "so far (e.g. service, date, time) - whatever is known, "
+                            "even if incomplete."
+                        ),
+                    },
                 },
                 "required": ["question"],
             },
@@ -123,17 +132,25 @@ def _create_booking_tool(tenant, conversation, tool_args):
             "status": "error",
             "message": "Sorry, that time was just taken - would you like to try another?",
         }
+
+    conversation.status = Conversation.Status.ACTIVE
+    conversation.pending_intent_state = {}
+    conversation.save(update_fields=["status", "pending_intent_state"])
     return {"status": "confirmed", "booking": booking}
 
 
 def _ask_clarification_tool(tenant, conversation, tool_args):
+    conversation.status = Conversation.Status.AWAITING_USER
+    conversation.pending_intent_state = tool_args.get("known_slots") or {}
+    conversation.save(update_fields=["status", "pending_intent_state"])
     return ask_clarification(tool_args.get("question", ""))
 
 
 # Adapts each tool's own literal signature to a uniform (tenant, conversation,
 # tool_args) calling convention, so the pipeline can dispatch generically by
-# name. conversation is needed by create_booking (for end_user) - the other
-# tools accept and ignore it, keeping dispatch uniform.
+# name. create_booking needs conversation.end_user; ask_clarification and
+# create_booking both use it to update conversation.status/pending_intent_state
+# (multi-turn slot filling) - check_availability accepts and ignores it.
 TOOL_REGISTRY = {
     "check_availability": _check_availability_tool,
     "create_booking": _create_booking_tool,
