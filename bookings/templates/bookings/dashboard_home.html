@@ -1,23 +1,27 @@
+{% extends "base.html" %}
 {% load tz %}
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Dashboard</title>
-  </head>
-  <body>
-    <h1>Upcoming bookings</h1>
-    <p><a href="{% url 'conversation-list' %}">View conversations</a></p>
-    <ul>
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+  <h1 class="text-2xl font-semibold text-gray-900">Upcoming bookings</h1>
+  <div class="mt-6 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <ul class="divide-y divide-gray-100">
       {% for booking in bookings %}
-        <li>
-          {% timezone booking.tenant.timezone %}{{ booking.scheduled_start }}{% endtimezone %} -
-          {{ booking.end_user.display_name|default:booking.end_user.phone_number }}
-          {% if booking.service %}({{ booking.service.name }}){% endif %}
+        <li class="flex items-center justify-between px-4 py-4 sm:px-6">
+          <div>
+            <p class="text-sm font-medium text-gray-900">
+              {{ booking.end_user.display_name|default:booking.end_user.phone_number }}
+              {% if booking.service %}
+                <span class="text-gray-500">&middot; {{ booking.service.name }}</span>
+              {% endif %}
+            </p>
+            <p class="mt-1 text-sm text-gray-500">
+              {% timezone booking.tenant.timezone %}{{ booking.scheduled_start }}{% endtimezone %}
+            </p>
+          </div>
         </li>
       {% empty %}
-        <li>No upcoming bookings.</li>
+        <li class="px-4 py-8 text-center text-sm text-gray-500 sm:px-6">No upcoming bookings.</li>
       {% endfor %}
     </ul>
-  </body>
-</html>
+  </div>
+{% endblock %}

@@ -1,4 +1,7 @@
-.PHONY: help up down build migrate health test lint format-check shell precommit-install precommit-run
+.PHONY: help up down build migrate health test lint format-check shell precommit-install precommit-run tailwind
+
+TAILWIND_VERSION := v4.3.3
+TAILWIND_BIN := .bin/tailwindcss
 
 help:
 	@echo "Available targets:"
@@ -11,10 +14,20 @@ help:
 	@echo "  lint              - run ruff check in the app container"
 	@echo "  format-check      - run black --check in the app container"
 	@echo "  shell             - open a shell in the app container"
+	@echo "  tailwind          - compile static/css/output.css from assets/tailwind/input.css"
 	@echo "  precommit-install - create .venv, install dev deps, install the pre-commit hook"
 	@echo "  precommit-run     - run pre-commit against all files"
 
-up:
+$(TAILWIND_BIN):
+	mkdir -p .bin
+	curl -sL -o $(TAILWIND_BIN) https://github.com/tailwindlabs/tailwindcss/releases/download/$(TAILWIND_VERSION)/tailwindcss-linux-x64
+	chmod +x $(TAILWIND_BIN)
+
+tailwind: $(TAILWIND_BIN)
+	mkdir -p static/css
+	$(TAILWIND_BIN) -i assets/tailwind/input.css -o static/css/output.css --minify
+
+up: tailwind
 	docker compose up --build -d
 
 down:

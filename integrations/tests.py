@@ -491,3 +491,25 @@ def test_webhook_leaves_audio_content_empty_when_transcription_fails(client, set
 
     message = Message.objects.get(whatsapp_message_id="wamid.audio-2")
     assert message.content == ""
+
+
+def test_integrations_page_requires_login(client):
+    response = client.get(reverse("integrations"))
+    assert response.status_code == 302
+    assert response.url.startswith(reverse("login"))
+
+
+def test_integrations_page_shows_no_connection_state_for_staff(client, staff_user):
+    client.force_login(staff_user)
+    response = client.get(reverse("integrations"))
+    assert response.status_code == 200
+    assert response.context["connection"] is None
+    assert b"No calendar connected yet" in response.content
+
+
+def test_integrations_page_shows_neutral_message_for_platform_admin(client, platform_admin_user):
+    client.force_login(platform_admin_user)
+    response = client.get(reverse("integrations"))
+    assert response.status_code == 200
+    assert response.context["tenant"] is None
+    assert b"Platform admins" in response.content

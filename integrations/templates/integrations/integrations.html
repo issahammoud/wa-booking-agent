@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Integrations{% endblock %}
+{% block content %}
+  <h1 class="text-2xl font-semibold text-gray-900">Integrations</h1>
+
+  {% if not tenant %}
+    <p class="mt-6 text-sm text-gray-500">
+      Platform admins aren't scoped to a single tenant - log in as a tenant's staff user to manage its calendar connection.
+    </p>
+  {% elif connection %}
+    <div class="mt-6 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <p class="text-sm font-medium text-gray-900">
+        Connected to {{ connection.get_provider_display }}
+      </p>
+      <p class="mt-1 text-sm text-gray-500">
+        Since {{ connection.connected_at }}
+        {% if connection.last_synced_at %} &middot; last synced {{ connection.last_synced_at }}{% endif %}
+      </p>
+    </div>
+  {% else %}
+    <p class="mt-6 text-sm text-gray-500">
+      No calendar connected yet - bookings are only tracked in this dashboard until you connect one.
+    </p>
+    <div class="mt-4 flex gap-3">
+      <button type="button" disabled
+        class="cursor-not-allowed rounded-md border border-gray-300 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-400">
+        Connect Google Calendar (coming soon)
+      </button>
+      <button type="button" disabled
+        class="cursor-not-allowed rounded-md border border-gray-300 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-400">
+        Connect Outlook Calendar (coming soon)
+      </button>
+    </div>
+  {% endif %}
+{% endblock %}

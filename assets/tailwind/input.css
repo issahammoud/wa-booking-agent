@@ -1,0 +1,17 @@
+@import "tailwindcss";
+
+/* Every app's templates directory - v4's automatic detection is rooted at
+   this file's location, which doesn't naturally reach sibling Django apps. */
+@source "../../core/templates";
+@source "../../bookings/templates";
+@source "../../conversations/templates";
+@source "../../integrations/templates";
+
+@theme {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}

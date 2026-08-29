@@ -1,23 +1,27 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Conversations</title>
-  </head>
-  <body>
-    <h1>Conversations</h1>
-    <p><a href="{% url 'dashboard-home' %}">Back to dashboard</a></p>
-    <ul>
+{% extends "base.html" %}
+{% block title %}Conversations{% endblock %}
+{% block content %}
+  <h1 class="text-2xl font-semibold text-gray-900">Conversations</h1>
+  <div class="mt-6 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+    <ul class="divide-y divide-gray-100">
       {% for conversation in conversation_list %}
         <li>
-          <a href="{% url 'conversation-detail' conversation.pk %}">
-            {{ conversation.end_user.display_name|default:conversation.end_user.phone_number }}
+          <a href="{% url 'conversation-detail' conversation.pk %}"
+            class="flex items-center justify-between px-4 py-4 hover:bg-gray-50 sm:px-6">
+            <div>
+              <p class="text-sm font-medium text-gray-900">
+                {{ conversation.end_user.display_name|default:conversation.end_user.phone_number }}
+              </p>
+              <p class="mt-1 text-sm text-gray-500">Last message {{ conversation.last_message_at }}</p>
+            </div>
+            <span class="rounded-full bg-brand-50 px-2.5 py-0.5 text-xs font-medium text-brand-700">
+              {{ conversation.status }}
+            </span>
           </a>
-          - {{ conversation.status }} - last message {{ conversation.last_message_at }}
         </li>
       {% empty %}
-        <li>No conversations yet.</li>
+        <li class="px-4 py-8 text-center text-sm text-gray-500 sm:px-6">No conversations yet.</li>
       {% endfor %}
     </ul>
-  </body>
-</html>
+  </div>
+{% endblock %}

@@ -18,6 +18,15 @@ SECURE_HSTS_PRELOAD = True
 
 X_FRAME_OPTIONS = "DENY"
 
+# Hashed, compressed static files served by WhiteNoise - requires
+# `manage.py collectstatic` to have run (the Docker image's build does this
+# under these same prod settings). Not used in dev - see base.py.
+STORAGES = {
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
+    },
+}
+
 # If deployed behind a reverse proxy/load balancer that terminates TLS and
 # sets X-Forwarded-Proto, uncomment the line below - only do so once that
 # proxy is confirmed to strip/overwrite any client-supplied header of the
