@@ -26,7 +26,16 @@ class Command(BaseCommand):
 
         tenant, created = Tenant.objects.get_or_create(
             business_name="Demo Clinic",
-            defaults={"vertical": Tenant.Vertical.DOCTOR},
+            defaults={
+                "vertical": Tenant.Vertical.DOCTOR,
+                "working_hours": {
+                    "mon": ["09:00", "17:00"],
+                    "tue": ["09:00", "17:00"],
+                    "wed": ["09:00", "17:00"],
+                    "thu": ["09:00", "17:00"],
+                    "fri": ["09:00", "17:00"],
+                },
+            },
         )
         if created:
             self.stdout.write(self.style.SUCCESS("Created Demo Clinic tenant"))

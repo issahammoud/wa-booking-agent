@@ -280,8 +280,10 @@ def test_ask_clarification_returns_text_unchanged():
 
 
 def test_execute_tool_dispatches_check_availability(tenant):
+    # tenant fixture has no working_hours configured - real computation
+    # correctly returns no slots rather than a hardcoded fake count.
     result = execute_tool("check_availability", tenant, {})
-    assert len(result) == 3
+    assert result == []
 
 
 def test_execute_tool_dispatches_ask_clarification(tenant):

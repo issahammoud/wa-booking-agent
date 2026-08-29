@@ -12,7 +12,7 @@ def ask_clarification(text):
 
 
 def _check_availability_tool(tenant, tool_args):
-    return check_availability(tenant, tool_args.get("date_range"))
+    return check_availability(tenant, tool_args.get("date_range"), service=tool_args.get("service"))
 
 
 def _ask_clarification_tool(tenant, tool_args):

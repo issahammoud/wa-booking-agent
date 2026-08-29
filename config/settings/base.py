@@ -107,6 +107,29 @@ WHATSAPP_WEBHOOK_VERIFY_TOKEN = env("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
 WHATSAPP_APP_SECRET = env("WHATSAPP_APP_SECRET")
 
 
+# Logging
+# Without this, every app module's logging.getLogger(__name__).info(...)
+# call (webhook resolution, buffer processing, etc.) has no handler
+# anywhere in its logger hierarchy and is silently dropped - the request
+# lines the dev server prints itself (django.server) are a separate,
+# already-configured logger and were never affected by this gap. Only
+# root is configured here (not the 'django'/'django.server' loggers
+# Django already sets up) to avoid double-printing framework logs.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "app_console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "root": {
+        "handlers": ["app_console"],
+        "level": "INFO",
+    },
+}
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
 
