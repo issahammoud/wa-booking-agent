@@ -53,6 +53,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       WHATSAPP_WEBHOOK_VERIFY_TOKEN: ci-verify-token
       WHATSAPP_APP_SECRET: ci-app-secret
+      OPENROUTER_API_KEY: ci-openrouter-key
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

@@ -20,7 +20,7 @@ from django.conf import settings
 
 from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
-from integrations.agent.mock import MockAgent
+from integrations.agent import get_agent
 from integrations.agent.tools import execute_tool
 from integrations.whatsapp_client import send_text_message
 from tenants.models import Tenant
@@ -104,7 +104,7 @@ def _process_buffered_messages(tenant_id, end_user_id, message_ids):
 
 
 def _get_reply_text(tenant, conversation, messages):
-    response = MockAgent().respond(conversation, messages)
+    response = get_agent().respond(conversation, messages)
     if response.action == "reply":
         return response.text
 

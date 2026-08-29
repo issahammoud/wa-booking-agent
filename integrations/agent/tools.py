@@ -1,5 +1,48 @@
 from bookings.availability import check_availability
 
+# OpenAI-compatible function-calling schemas (OpenRouter's chat completions
+# endpoint follows this shape regardless of the underlying model). Sprint 8
+# ticket 2 adds create_booking and refines these descriptions.
+TOOL_SCHEMAS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "check_availability",
+            "description": "Look up open appointment slots for this business.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "service": {
+                        "type": "string",
+                        "description": "Name of the service, if the customer specified one.",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_clarification",
+            "description": (
+                "Ask the customer a clarifying question when required booking "
+                "details are missing."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "The question to send to the customer.",
+                    },
+                },
+                "required": ["text"],
+            },
+        },
+    },
+]
+
 
 def ask_clarification(text):
     """Pass-through: returns the given text unchanged.

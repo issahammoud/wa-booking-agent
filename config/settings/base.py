@@ -106,6 +106,18 @@ DEBOUNCE_WINDOW_SECONDS = env.int("DEBOUNCE_WINDOW_SECONDS", default=5)
 WHATSAPP_WEBHOOK_VERIFY_TOKEN = env("WHATSAPP_WEBHOOK_VERIFY_TOKEN")
 WHATSAPP_APP_SECRET = env("WHATSAPP_APP_SECRET")
 
+# Which agent implementation replies to WhatsApp messages - "mock" (default,
+# free, no network calls) or "openrouter" (a real LLM via OpenRouter). See
+# integrations/agent/__init__.py::get_agent().
+AGENT_BACKEND = env("AGENT_BACKEND", default="mock")
+
+# OpenRouter (https://openrouter.ai/) - a single key/platform for both LLM
+# chat completions (the real agent) and audio transcription, routing to
+# whichever underlying model AGENT_MODEL/TRANSCRIPTION_MODEL name.
+OPENROUTER_API_KEY = env("OPENROUTER_API_KEY")
+AGENT_MODEL = env("AGENT_MODEL", default="deepseek/deepseek-chat")
+TRANSCRIPTION_MODEL = env("TRANSCRIPTION_MODEL", default="openai/whisper-1")
+
 
 # Logging
 # Without this, every app module's logging.getLogger(__name__).info(...)
