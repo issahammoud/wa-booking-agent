@@ -6,9 +6,15 @@
   </head>
   <body>
     <h1>Conversations</h1>
+    <p><a href="{% url 'dashboard-home' %}">Back to dashboard</a></p>
     <ul>
       {% for conversation in conversation_list %}
-        <li>{{ conversation.end_user.phone_number }} - {{ conversation.status }}</li>
+        <li>
+          <a href="{% url 'conversation-detail' conversation.pk %}">
+            {{ conversation.end_user.display_name|default:conversation.end_user.phone_number }}
+          </a>
+          - {{ conversation.status }} - last message {{ conversation.last_message_at }}
+        </li>
       {% empty %}
         <li>No conversations yet.</li>
       {% endfor %}

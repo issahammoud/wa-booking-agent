@@ -1,15 +1,20 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.views.generic import ListView
+from django.views.generic import DetailView, ListView
 
 from conversations.models import Conversation
 from core.mixins import TenantScopedMixin
 
 
 class ConversationListView(LoginRequiredMixin, TenantScopedMixin, ListView):
-    """Placeholder staff dashboard landing page.
+    """Staff dashboard view of every conversation for the logged-in user's tenant."""
 
-    Proves TenantScopedMixin works end-to-end; Sprint 7 replaces this
-    with the real dashboard.
-    """
+    model = Conversation
+
+    def get_queryset(self):
+        return super().get_queryset().order_by("-last_message_at")
+
+
+class ConversationDetailView(LoginRequiredMixin, TenantScopedMixin, DetailView):
+    """Read-only view of a single conversation's full message history."""
 
     model = Conversation

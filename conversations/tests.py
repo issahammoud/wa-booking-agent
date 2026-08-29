@@ -238,3 +238,42 @@ def test_concurrent_checks_for_same_slot_only_process_once(tenant, end_user):
 
     assert mock_send.call_count == 1
     assert conversation.messages.filter(direction=Message.Direction.OUTBOUND).count() == 1
+
+
+def test_conversation_detail_shows_messages_in_chronological_order(
+    client, tenant, staff_user, end_user
+):
+    conversation = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    first = _inbound(conversation, "first", "wamid.detail-order-1")
+    second = _inbound(conversation, "second", "wamid.detail-order-2")
+    third = _inbound(conversation, "third", "wamid.detail-order-3")
+
+    client.force_login(staff_user)
+    response = client.get(reverse("conversation-detail", args=[conversation.pk]))
+
+    displayed = list(response.context["conversation"].messages.all())
+    assert displayed == [first, second, third]
+
+
+def test_staff_user_gets_404_for_other_tenants_conversation(
+    client, tenant, other_tenant, staff_user
+):
+    other_end_user = EndUser.objects.create(tenant=other_tenant, phone_number="+15550009991")
+    other_conversation = Conversation.objects.create(tenant=other_tenant, end_user=other_end_user)
+
+    client.force_login(staff_user)
+    response = client.get(reverse("conversation-detail", args=[other_conversation.pk]))
+
+    assert response.status_code == 404
+
+
+def test_platform_admin_can_view_any_tenants_conversation_detail(
+    client, other_tenant, platform_admin_user
+):
+    other_end_user = EndUser.objects.create(tenant=other_tenant, phone_number="+15550009992")
+    other_conversation = Conversation.objects.create(tenant=other_tenant, end_user=other_end_user)
+
+    client.force_login(platform_admin_user)
+    response = client.get(reverse("conversation-detail", args=[other_conversation.pk]))
+
+    assert response.status_code == 200
