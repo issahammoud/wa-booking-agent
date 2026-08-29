@@ -219,3 +219,4 @@ __marimo__/
 
 # codiff local cache
 .codiff.db
+docker-compose.local.yml
