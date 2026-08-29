@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection, transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from bookings.availability import TimeSlot, check_availability, compute_available_slots
@@ -340,3 +341,84 @@ def test_create_booking_concurrent_requests_only_one_succeeds():
     assert outcomes.count("ok") == 1
     assert outcomes.count("error") == 1
     assert Booking.objects.filter(tenant=tenant, scheduled_start=start).count() == 1
+
+
+def test_dashboard_shows_only_own_tenant_upcoming_bookings(
+    client, tenant, other_tenant, end_user, service, staff_user
+):
+    other_end_user = EndUser.objects.create(tenant=other_tenant, phone_number="+15550004321")
+    start = timezone.now() + datetime.timedelta(days=1)
+    own_booking = Booking.objects.create(
+        tenant=tenant,
+        end_user=end_user,
+        service=service,
+        scheduled_start=start,
+        scheduled_end=start + datetime.timedelta(minutes=30),
+    )
+    other_booking = Booking.objects.create(
+        tenant=other_tenant,
+        end_user=other_end_user,
+        scheduled_start=start,
+        scheduled_end=start + datetime.timedelta(minutes=30),
+    )
+
+    client.force_login(staff_user)
+    response = client.get(reverse("dashboard-home"))
+
+    visible = list(response.context["bookings"])
+    assert own_booking in visible
+    assert other_booking not in visible
+
+
+def test_dashboard_excludes_past_and_non_confirmed_bookings(
+    tenant, end_user, service, staff_user, client
+):
+    past_start = timezone.now() - datetime.timedelta(days=1)
+    cancelled_start = timezone.now() + datetime.timedelta(days=2)
+    Booking.objects.create(
+        tenant=tenant,
+        end_user=end_user,
+        service=service,
+        scheduled_start=past_start,
+        scheduled_end=past_start + datetime.timedelta(minutes=30),
+    )
+    Booking.objects.create(
+        tenant=tenant,
+        end_user=end_user,
+        service=service,
+        status=Booking.Status.CANCELLED,
+        scheduled_start=cancelled_start,
+        scheduled_end=cancelled_start + datetime.timedelta(minutes=30),
+    )
+
+    client.force_login(staff_user)
+    response = client.get(reverse("dashboard-home"))
+
+    assert list(response.context["bookings"]) == []
+
+
+def test_platform_admin_sees_all_tenants_upcoming_bookings(
+    client, tenant, other_tenant, end_user, service, platform_admin_user
+):
+    other_end_user = EndUser.objects.create(tenant=other_tenant, phone_number="+15550004322")
+    start = timezone.now() + datetime.timedelta(days=1)
+    own_booking = Booking.objects.create(
+        tenant=tenant,
+        end_user=end_user,
+        service=service,
+        scheduled_start=start,
+        scheduled_end=start + datetime.timedelta(minutes=30),
+    )
+    other_booking = Booking.objects.create(
+        tenant=other_tenant,
+        end_user=other_end_user,
+        scheduled_start=start,
+        scheduled_end=start + datetime.timedelta(minutes=30),
+    )
+
+    client.force_login(platform_admin_user)
+    response = client.get(reverse("dashboard-home"))
+
+    visible = list(response.context["bookings"])
+    assert own_booking in visible
+    assert other_booking in visible

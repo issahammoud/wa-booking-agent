@@ -27,9 +27,9 @@ ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=[])
 AUTH_USER_MODEL = "tenants.StaffUser"
 
 LOGIN_URL = "login"
-# "conversation-list" is wired in the conversations app (tenant-scoped
-# permission check ticket) - it's the staff dashboard landing page.
-LOGIN_REDIRECT_URL = "conversation-list"
+# "dashboard-home" (bookings app) is the staff dashboard landing page,
+# showing the logged-in staff user's tenant's upcoming bookings.
+LOGIN_REDIRECT_URL = "dashboard-home"
 LOGOUT_REDIRECT_URL = "login"
 
 

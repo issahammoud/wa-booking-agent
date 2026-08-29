@@ -1,0 +1,23 @@
+{% load tz %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dashboard</title>
+  </head>
+  <body>
+    <h1>Upcoming bookings</h1>
+    <p><a href="{% url 'conversation-list' %}">View conversations</a></p>
+    <ul>
+      {% for booking in bookings %}
+        <li>
+          {% timezone booking.tenant.timezone %}{{ booking.scheduled_start }}{% endtimezone %} -
+          {{ booking.end_user.display_name|default:booking.end_user.phone_number }}
+          {% if booking.service %}({{ booking.service.name }}){% endif %}
+        </li>
+      {% empty %}
+        <li>No upcoming bookings.</li>
+      {% endfor %}
+    </ul>
+  </body>
+</html>
