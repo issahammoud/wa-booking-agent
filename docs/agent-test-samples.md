@@ -45,6 +45,49 @@ localized phrasing, rather than the current single-call-per-turn design).
 Logged here as a known gap for a future sprint, per this ticket's own
 "log it if not yet solvable" outcome.
 
+## Sprint 9 ticket 3 follow-up (2026-08-30): capping, localization, pagination
+
+Verified live against the real agent after capping `check_availability` to
+3 slots, moving reply-phrasing into the model itself (see
+`integrations/agent/openrouter.py::_respond_to_tool_call`), and adding an
+`after_date` pagination argument:
+
+- **Capping**: every real test consistently returned exactly 3 slots (or
+  fewer if genuinely unavailable) - confirmed multiple times.
+- **Localization**: replies came back correctly in French and English
+  matching the customer's own language, including the final booking
+  confirmation message (previously always English via the Python string
+  template).
+- **Pagination**: works correctly and reliably when the customer's
+  rejection is unambiguous ("please check for slots after that") - a full
+  reject → page forward → accept → real booking flow completed correctly.
+  With vaguer phrasing (French colloquial "avez-vous autre chose plus
+  tard?"), the model sometimes asks permission before re-searching rather
+  than paging forward immediately - a reasonable interpretation, not
+  broken, but not fully autonomous either. Logged as a further prompt-
+  iteration opportunity, not blocking.
+- **Real bug found and fixed**: the system prompt had no notion of "today"
+  at all. A customer saying "September 1st" with no year got resolved
+  against the model's own training-data assumptions - produced a real
+  booking for **September 1st, 2025** (the past) instead of 2026.
+  `build_system_prompt` now states the tenant-local current date/day
+  explicitly and instructs the model to resolve relative/partial dates
+  against it. Regression-tested
+  (`test_build_system_prompt_states_todays_date`) and re-verified live -
+  the same request now correctly books 2026.
+
+## Sprint 9 ticket 5 follow-up (2026-08-30): bounded conversation memory
+
+`integrations/agent/memory.py` adds a sliding window (last 30 messages
+sent verbatim) plus an incremental running summary of anything older,
+replacing unbounded full-history. Verified live with a synthetic 92-message
+conversation: a fact stated in message #1 (a latex allergy) was correctly
+recalled when asked about "earlier" many turns later, purely via the
+generated summary - the raw message was 60+ messages outside the verbatim
+window by then. `context_summary`/`context_summary_through_message_id` on
+`Conversation` are visible in `/admin/` for debugging what the agent
+currently "remembers" about a given conversation.
+
 ## How to re-run
 
 ```sh

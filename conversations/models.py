@@ -34,6 +34,12 @@ class Conversation(models.Model):
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
     # e.g. {"intent": "book_appointment", "slots": {...}}
     pending_intent_state = models.JSONField(default=dict, blank=True)
+    # Bounded conversation memory (integrations/agent/memory.py) - a short
+    # running summary of messages that have fallen outside the agent's
+    # verbatim history window, and the id of the last message folded into
+    # it, so re-summarization only processes what's newly aged out.
+    context_summary = models.TextField(blank=True)
+    context_summary_through_message_id = models.PositiveBigIntegerField(null=True, blank=True)
     assigned_staff = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,

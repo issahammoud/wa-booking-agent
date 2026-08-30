@@ -1,10 +1,18 @@
+import json
+from datetime import date as date_cls
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from bookings.availability import TimeSlot, check_availability
+from bookings.availability import DEFAULT_SEARCH_DAYS, TimeSlot, check_availability
 from bookings.models import Service
 from bookings.services import SlotUnavailableError, create_booking
 from conversations.models import Conversation
+
+# Never present more than this many suggested slots in one reply - a raw
+# search can return dozens, which is unusable over WhatsApp. The agent
+# re-calls check_availability with after_date to page further out if the
+# customer rejects all of them.
+MAX_SUGGESTED_SLOTS = 3
 
 # OpenAI-compatible function-calling schemas (OpenRouter's chat completions
 # endpoint follows this shape regardless of the underlying model).
@@ -13,13 +21,27 @@ TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "check_availability",
-            "description": "Look up open appointment slots for this business.",
+            "description": (
+                "Look up open appointment slots for this business. Returns at "
+                "most a few suggestions at a time - if the customer rejects all "
+                "of them, call this again with after_date set to the last date "
+                "you offered, to page further out."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "service": {
                         "type": "string",
                         "description": "Name of the service, if the customer specified one.",
+                    },
+                    "after_date": {
+                        "type": "string",
+                        "description": (
+                            "Only search for slots after this date (ISO 8601, "
+                            "e.g. 2026-09-04). Use this to page forward once the "
+                            "customer has rejected everything offered so far - "
+                            "omit it on the first search."
+                        ),
                     },
                 },
                 "required": [],
@@ -103,7 +125,19 @@ def _find_service(tenant, name):
 
 def _check_availability_tool(tenant, conversation, tool_args):
     service = _find_service(tenant, tool_args.get("service"))
-    return check_availability(tenant, service=service)
+    date_range = _date_range_after(tool_args.get("after_date"))
+    slots = check_availability(tenant, date_range=date_range, service=service)
+    return slots[:MAX_SUGGESTED_SLOTS]
+
+
+def _date_range_after(after_date):
+    if not after_date:
+        return None
+    try:
+        start = date_cls.fromisoformat(after_date) + timedelta(days=1)
+    except ValueError:
+        return None
+    return (start, start + timedelta(days=DEFAULT_SEARCH_DAYS - 1))
 
 
 def _create_booking_tool(tenant, conversation, tool_args):
@@ -163,3 +197,27 @@ def execute_tool(tool_name, tenant, conversation, tool_args):
     if tool is None:
         raise ValueError(f"Unknown tool: {tool_name!r}")
     return tool(tenant, conversation, tool_args)
+
+
+def serialize_tool_result(tool_name, result, tenant):
+    """A compact, JSON-serializable summary of a tool's result, for a real
+    agent to feed back to the LLM as a `role: "tool"` message - the model
+    phrases the actual reply from this, in the customer's own language,
+    rather than a Python string template doing it in English only."""
+    tz = ZoneInfo(tenant.timezone)
+    if tool_name == "check_availability":
+        return json.dumps(
+            {"available_slots": [slot.start.astimezone(tz).isoformat() for slot in result]}
+        )
+    if tool_name == "create_booking":
+        if result["status"] != "confirmed":
+            return json.dumps(result)
+        booking = result["booking"]
+        return json.dumps(
+            {
+                "status": "confirmed",
+                "service": booking.service.name if booking.service else None,
+                "start_time": booking.scheduled_start.astimezone(tz).isoformat(),
+            }
+        )
+    return json.dumps({"result": result})

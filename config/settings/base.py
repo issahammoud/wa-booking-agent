@@ -51,6 +51,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -118,6 +119,15 @@ OPENROUTER_API_KEY = env("OPENROUTER_API_KEY")
 AGENT_MODEL = env("AGENT_MODEL", default="deepseek/deepseek-chat")
 TRANSCRIPTION_MODEL = env("TRANSCRIPTION_MODEL", default="openai/whisper-1")
 
+# OAuth clients for the "Connect Google/Outlook Calendar" flow
+# (integrations/calendar_oauth.py). Register a redirect URI matching
+# request.build_absolute_uri(reverse("calendar-<provider>-callback")) in
+# each provider's console.
+GOOGLE_OAUTH_CLIENT_ID = env("GOOGLE_OAUTH_CLIENT_ID")
+GOOGLE_OAUTH_CLIENT_SECRET = env("GOOGLE_OAUTH_CLIENT_SECRET")
+MICROSOFT_OAUTH_CLIENT_ID = env("MICROSOFT_OAUTH_CLIENT_ID")
+MICROSOFT_OAUTH_CLIENT_SECRET = env("MICROSOFT_OAUTH_CLIENT_SECRET")
+
 
 # Logging
 # Without this, every app module's logging.getLogger(__name__).info(...)
@@ -177,6 +187,12 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
 STATIC_URL = "static/"
+STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_ROOT = BASE_DIR / "staticfiles"
+# The hashed-manifest storage (prod.py) requires collectstatic to have run,
+# which never happens in local dev (bind-mounted, no build step) - runserver
+# serves STATICFILES_DIRS directly via the staticfiles finders regardless of
+# this setting, so the plain default storage here is what keeps dev working.
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field

@@ -4,10 +4,12 @@ import json
 import logging
 
 from django.conf import settings
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.db import IntegrityError, transaction
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.views.generic import TemplateView
 
 from conversations.models import Conversation, EndUser, Message
 from conversations.tasks import schedule_buffer_check
@@ -16,6 +18,24 @@ from integrations.whatsapp_client import download_media
 from tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
+
+
+class IntegrationsView(LoginRequiredMixin, TemplateView):
+    """Staff-facing calendar-connection status page.
+
+    Platform admins aren't scoped to any single tenant, so there's nothing
+    to connect from here - just a neutral message for that role.
+    """
+
+    template_name = "integrations/integrations.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        user = self.request.user
+        tenant = None if user.role == user.Role.PLATFORM_ADMIN else user.tenant
+        context["tenant"] = tenant
+        context["connection"] = getattr(tenant, "calendar_connection", None) if tenant else None
+        return context
 
 
 @csrf_exempt

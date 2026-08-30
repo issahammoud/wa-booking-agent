@@ -43,10 +43,14 @@ def create_booking(tenant, end_user, slot, service):
     connection = getattr(tenant, "calendar_connection", None)
     if connection is not None:
         from bookings.calendar import get_provider
+        from integrations.retry import call_with_retry
 
         try:
-            external_event_id = get_provider(connection).create_event(
-                connection, slot, summary=f"Booking: {service.name if service else 'Appointment'}"
+            external_event_id = call_with_retry(
+                get_provider(connection).create_event,
+                connection,
+                slot,
+                summary=f"Booking: {service.name if service else 'Appointment'}",
             )
         except Exception:
             logger.exception(

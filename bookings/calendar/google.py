@@ -1,11 +1,16 @@
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 
 import requests
+from django.conf import settings
+from django.utils import timezone
 
 from bookings.availability import TimeSlot
-from bookings.calendar.base import CalendarProvider, auth_header, day_bound
+from bookings.calendar.base import CalendarProvider, auth_header, day_bound, decode_token
 
 EVENTS_URL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+TOKEN_URL = "https://oauth2.googleapis.com/token"
+OAUTH_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
 
 class GoogleCalendarProvider(CalendarProvider):
@@ -47,3 +52,20 @@ class GoogleCalendarProvider(CalendarProvider):
         )
         response.raise_for_status()
         return response.json()["id"]
+
+    def refresh_access_token(self, connection):
+        response = requests.post(
+            TOKEN_URL,
+            data={
+                "client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
+                "client_secret": settings.GOOGLE_OAUTH_CLIENT_SECRET,
+                "refresh_token": decode_token(connection.refresh_token),
+                "grant_type": "refresh_token",
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        connection.access_token = data["access_token"].encode()
+        connection.token_expires_at = timezone.now() + timedelta(seconds=data["expires_in"])
+        connection.save(update_fields=["access_token", "token_expires_at"])
