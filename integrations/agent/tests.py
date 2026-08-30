@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from bookings.models import Booking, Service
 from conversations.models import Conversation, EndUser, Message
-from integrations.agent import get_agent
+from integrations.agent import get_agent, memory
 from integrations.agent.mock import MockAgent
 from integrations.agent.openrouter import FALLBACK_REPLY, OpenRouterAgent
 from integrations.agent.prompts import build_system_prompt
@@ -349,3 +349,111 @@ def test_build_system_prompt_states_todays_date(tenant):
     prompt = build_system_prompt(tenant)
     today_local = timezone.now().astimezone(ZoneInfo(tenant.timezone))
     assert today_local.strftime("%Y-%m-%d") in prompt
+
+
+def _add_messages(conversation, count, prefix="msg"):
+    return [
+        Message.objects.create(
+            conversation=conversation,
+            direction=Message.Direction.INBOUND if i % 2 == 0 else Message.Direction.OUTBOUND,
+            message_type=Message.MessageType.TEXT,
+            content=f"{prefix}-{i}",
+        )
+        for i in range(count)
+    ]
+
+
+def test_windowed_messages_returns_all_when_under_window(conversation):
+    assert len(memory.windowed_messages(conversation)) == 1
+
+
+def test_windowed_messages_caps_at_window_size(tenant, end_user):
+    conv = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    created = _add_messages(conv, memory.WINDOW_SIZE + 5)
+
+    result = memory.windowed_messages(conv)
+
+    assert len(result) == memory.WINDOW_SIZE
+    assert [m.id for m in result] == [m.id for m in created[-memory.WINDOW_SIZE :]]
+
+
+def test_pending_summary_messages_empty_below_batch_size(tenant, end_user):
+    conv = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    _add_messages(conv, memory.WINDOW_SIZE + memory.SUMMARY_BATCH_SIZE - 1)
+
+    assert memory.pending_summary_messages(conv) == []
+
+
+def test_pending_summary_messages_returns_aged_out_batch(tenant, end_user):
+    conv = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    created = _add_messages(conv, memory.WINDOW_SIZE + memory.SUMMARY_BATCH_SIZE)
+
+    pending = memory.pending_summary_messages(conv)
+
+    assert [m.id for m in pending] == [m.id for m in created[: memory.SUMMARY_BATCH_SIZE]]
+
+
+def test_pending_summary_messages_respects_existing_checkpoint(tenant, end_user):
+    conv = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    created = _add_messages(conv, memory.WINDOW_SIZE + memory.SUMMARY_BATCH_SIZE)
+    conv.context_summary_through_message_id = created[4].id
+    conv.save()
+
+    pending = memory.pending_summary_messages(conv)
+
+    assert all(m.id > created[4].id for m in pending)
+
+
+def test_persist_summary_updates_conversation(conversation):
+    memory.persist_summary(conversation, "A short summary.", 42)
+
+    conversation.refresh_from_db()
+    assert conversation.context_summary == "A short summary."
+    assert conversation.context_summary_through_message_id == 42
+
+
+def test_openrouter_agent_bounds_history_regardless_of_conversation_length(tenant, end_user):
+    conv = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    _add_messages(conv, memory.WINDOW_SIZE + memory.SUMMARY_BATCH_SIZE + 5)
+    fake_response = _fake_completion({"role": "assistant", "content": "Got it"})
+
+    with patch(
+        "integrations.agent.openrouter.requests.post", return_value=fake_response
+    ) as mock_post:
+        OpenRouterAgent().respond(conv, [])
+
+    # One summarization call, one real reply call - never grows with history.
+    assert mock_post.call_count == 2
+    reply_call_messages = mock_post.call_args_list[-1].kwargs["json"]["messages"]
+    assert len(reply_call_messages) == 1 + memory.WINDOW_SIZE
+
+
+def test_openrouter_agent_summary_appears_in_system_content_after_update(tenant, end_user):
+    conv = Conversation.objects.create(tenant=tenant, end_user=end_user)
+    _add_messages(conv, memory.WINDOW_SIZE + memory.SUMMARY_BATCH_SIZE)
+    summary_response = _fake_completion(
+        {"role": "assistant", "content": "Customer wants a consultation next week."}
+    )
+    reply_response = _fake_completion({"role": "assistant", "content": "Sure!"})
+
+    with patch(
+        "integrations.agent.openrouter.requests.post",
+        side_effect=[summary_response, reply_response],
+    ) as mock_post:
+        OpenRouterAgent().respond(conv, [])
+
+    conv.refresh_from_db()
+    assert conv.context_summary == "Customer wants a consultation next week."
+    reply_call_messages = mock_post.call_args_list[-1].kwargs["json"]["messages"]
+    assert "Customer wants a consultation next week." in reply_call_messages[0]["content"]
+
+
+def test_openrouter_agent_skips_summarization_when_not_enough_aged_out(conversation):
+    fake_response = _fake_completion({"role": "assistant", "content": "Hi!"})
+
+    with patch(
+        "integrations.agent.openrouter.requests.post", return_value=fake_response
+    ) as mock_post:
+        OpenRouterAgent().respond(conversation, list(conversation.messages.all()))
+
+    assert mock_post.call_count == 1

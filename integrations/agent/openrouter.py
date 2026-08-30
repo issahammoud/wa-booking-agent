@@ -4,6 +4,7 @@ import logging
 import requests
 from django.conf import settings
 
+from integrations.agent import memory
 from integrations.agent.base import AgentResponse
 from integrations.agent.prompts import build_system_prompt
 from integrations.agent.tools import TOOL_SCHEMAS, execute_tool, serialize_tool_result
@@ -36,6 +37,7 @@ class OpenRouterAgent:
 
     def respond(self, conversation, messages):
         tenant = conversation.tenant
+        self._maybe_update_summary(conversation, tenant)
         base_messages = [
             {"role": "system", "content": self._system_content(conversation)},
             *self._history(conversation),
@@ -87,12 +89,16 @@ class OpenRouterAgent:
     def _history(self, conversation):
         return [
             {"role": _ROLE_BY_DIRECTION[message.direction], "content": message.content}
-            for message in conversation.messages.order_by("created_at")
-            if message.content
+            for message in memory.windowed_messages(conversation)
         ]
 
     def _system_content(self, conversation):
         content = build_system_prompt(conversation.tenant)
+        if conversation.context_summary:
+            content += (
+                "\n\nSummary of earlier conversation, before the messages shown "
+                f"below (don't repeat this back verbatim): {conversation.context_summary}"
+            )
         if conversation.pending_intent_state:
             content += (
                 "\n\nBooking details already confirmed earlier in this conversation "
@@ -100,6 +106,18 @@ class OpenRouterAgent:
                 f"{json.dumps(conversation.pending_intent_state)}"
             )
         return content
+
+    def _maybe_update_summary(self, conversation, tenant):
+        new_messages = memory.pending_summary_messages(conversation)
+        if not new_messages:
+            return
+        prompt = memory.build_summarization_prompt(conversation, new_messages)
+        choice = self._chat_completion([{"role": "user", "content": prompt}], tenant, tools=None)
+        if choice is None:
+            # Best-effort - a failed summarization just delays until the next
+            # call sees enough new messages again, doesn't break this reply.
+            return
+        memory.persist_summary(conversation, choice.get("content") or "", new_messages[-1].id)
 
     def _chat_completion(self, messages, tenant, tools):
         payload = {"model": settings.AGENT_MODEL, "messages": messages}

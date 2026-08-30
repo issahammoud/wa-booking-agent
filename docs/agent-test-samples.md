@@ -76,6 +76,18 @@ Verified live against the real agent after capping `check_availability` to
   (`test_build_system_prompt_states_todays_date`) and re-verified live -
   the same request now correctly books 2026.
 
+## Sprint 9 ticket 5 follow-up (2026-08-30): bounded conversation memory
+
+`integrations/agent/memory.py` adds a sliding window (last 30 messages
+sent verbatim) plus an incremental running summary of anything older,
+replacing unbounded full-history. Verified live with a synthetic 92-message
+conversation: a fact stated in message #1 (a latex allergy) was correctly
+recalled when asked about "earlier" many turns later, purely via the
+generated summary - the raw message was 60+ messages outside the verbatim
+window by then. `context_summary`/`context_summary_through_message_id` on
+`Conversation` are visible in `/admin/` for debugging what the agent
+currently "remembers" about a given conversation.
+
 ## How to re-run
 
 ```sh
