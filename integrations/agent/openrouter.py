@@ -7,6 +7,7 @@ from django.conf import settings
 from integrations.agent.base import AgentResponse
 from integrations.agent.prompts import build_system_prompt
 from integrations.agent.tools import TOOL_SCHEMAS, execute_tool, serialize_tool_result
+from integrations.retry import call_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -106,9 +107,13 @@ class OpenRouterAgent:
             payload["tools"] = tools
         headers = {"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"}
 
-        try:
+        def _post():
             response = requests.post(OPENROUTER_CHAT_URL, headers=headers, json=payload, timeout=30)
             response.raise_for_status()
+            return response
+
+        try:
+            response = call_with_retry(_post)
             return response.json()["choices"][0]["message"]
         except (requests.RequestException, KeyError, IndexError, ValueError):
             logger.exception("OpenRouter chat completion failed for tenant=%s", tenant.id)

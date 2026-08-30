@@ -5,6 +5,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
+import requests
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, connection, transaction
 from django.urls import reverse
@@ -264,6 +265,24 @@ def test_create_booking_syncs_to_connected_external_calendar(
 
     booking.refresh_from_db()
     assert booking.external_event_id == "external-id-123"
+
+
+def test_create_booking_retries_transient_external_sync_failure(
+    tenant, end_user, service, calendar_connection
+):
+    start = timezone.now() + datetime.timedelta(days=1)
+    slot = TimeSlot(start=start, end=start + datetime.timedelta(minutes=30))
+
+    with patch("bookings.calendar.get_provider") as mock_get_provider:
+        mock_get_provider.return_value.create_event.side_effect = [
+            requests.ConnectionError,
+            "external-id-456",
+        ]
+        booking = create_booking(tenant, end_user, slot, service)
+
+    booking.refresh_from_db()
+    assert booking.external_event_id == "external-id-456"
+    assert mock_get_provider.return_value.create_event.call_count == 2
 
 
 def test_create_booking_survives_external_sync_failure(

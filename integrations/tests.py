@@ -16,6 +16,7 @@ from integrations.agent.mock import MockAgent
 from integrations.agent.tools import ask_clarification, execute_tool
 from integrations.calendar_oauth import STATE_SALT
 from integrations.models import CalendarConnection
+from integrations.retry import call_with_retry
 from integrations.transcription import transcribe_audio
 from integrations.whatsapp_client import download_media, send_text_message
 
@@ -641,3 +642,62 @@ def test_calendar_callback_replaces_existing_connection(client, settings, staff_
     connection = CalendarConnection.objects.get(tenant=tenant)
     assert connection.provider == "google"
     assert bytes(connection.access_token) == b"new-google-token"
+
+
+def _http_error(status_code):
+    response = Mock(status_code=status_code)
+    return requests.HTTPError(response=response)
+
+
+def test_call_with_retry_returns_result_on_first_success():
+    func = Mock(return_value="ok")
+    assert call_with_retry(func) == "ok"
+    assert func.call_count == 1
+
+
+def test_call_with_retry_retries_then_succeeds_on_transient_failure():
+    func = Mock(side_effect=[requests.ConnectionError, "ok"])
+    assert call_with_retry(func) == "ok"
+    assert func.call_count == 2
+
+
+def test_call_with_retry_retries_on_retryable_status_then_succeeds():
+    func = Mock(side_effect=[_http_error(503), "ok"])
+    assert call_with_retry(func) == "ok"
+    assert func.call_count == 2
+
+
+def test_call_with_retry_raises_immediately_on_non_retryable_status():
+    func = Mock(side_effect=_http_error(401))
+    with pytest.raises(requests.HTTPError):
+        call_with_retry(func)
+    assert func.call_count == 1
+
+
+def test_call_with_retry_raises_after_exhausting_attempts():
+    func = Mock(side_effect=requests.ConnectionError)
+    with pytest.raises(requests.ConnectionError):
+        call_with_retry(func, max_attempts=3)
+    assert func.call_count == 3
+
+
+def test_call_with_retry_passes_through_args_and_kwargs():
+    func = Mock(return_value="ok")
+    call_with_retry(func, "a", b=1)
+    func.assert_called_once_with("a", b=1)
+
+
+def test_transcribe_audio_retries_on_transient_failure(settings):
+    settings.OPENROUTER_API_KEY = "or-key"
+    fake_response = Mock()
+    fake_response.raise_for_status.return_value = None
+    fake_response.json.return_value = {"text": "hello"}
+
+    with patch(
+        "integrations.transcription.requests.post",
+        side_effect=[requests.ConnectionError, fake_response],
+    ) as mock_post:
+        result = transcribe_audio(b"fake-audio-bytes")
+
+    assert result == "hello"
+    assert mock_post.call_count == 2

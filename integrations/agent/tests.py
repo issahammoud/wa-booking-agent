@@ -102,7 +102,12 @@ def test_openrouter_agent_falls_back_when_final_phrasing_call_fails(tenant, conv
 
     with patch(
         "integrations.agent.openrouter.requests.post",
-        side_effect=[first, requests.ConnectionError],
+        side_effect=[
+            first,
+            requests.ConnectionError,
+            requests.ConnectionError,
+            requests.ConnectionError,
+        ],
     ):
         result = OpenRouterAgent().respond(conversation, list(conversation.messages.all()))
 
