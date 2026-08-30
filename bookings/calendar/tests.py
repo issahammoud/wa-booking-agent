@@ -150,3 +150,64 @@ def test_outlook_create_event_returns_external_id(outlook_connection):
         )
 
     assert event_id == "outlook-event-456"
+
+
+def test_google_refresh_access_token_updates_connection(google_connection):
+    fake_response = Mock()
+    fake_response.json.return_value = {"access_token": "new-google-token", "expires_in": 3600}
+    fake_response.raise_for_status = Mock()
+
+    with patch("bookings.calendar.google.requests.post", return_value=fake_response) as mock_post:
+        GoogleCalendarProvider().refresh_access_token(google_connection)
+
+    assert mock_post.call_args.kwargs["data"]["refresh_token"] == "fake-refresh"
+    assert mock_post.call_args.kwargs["data"]["grant_type"] == "refresh_token"
+    google_connection.refresh_from_db()
+    assert bytes(google_connection.access_token) == b"new-google-token"
+    assert google_connection.token_expires_at > datetime.datetime.now(datetime.UTC)
+
+
+def test_outlook_refresh_access_token_rotates_refresh_token_when_given(outlook_connection):
+    fake_response = Mock()
+    fake_response.json.return_value = {
+        "access_token": "new-outlook-token",
+        "refresh_token": "rotated-refresh",
+        "expires_in": 3600,
+    }
+    fake_response.raise_for_status = Mock()
+
+    with patch("bookings.calendar.outlook.requests.post", return_value=fake_response):
+        OutlookCalendarProvider().refresh_access_token(outlook_connection)
+
+    outlook_connection.refresh_from_db()
+    assert bytes(outlook_connection.access_token) == b"new-outlook-token"
+    assert bytes(outlook_connection.refresh_token) == b"rotated-refresh"
+
+
+def test_auth_header_refreshes_when_token_expired(google_connection):
+    google_connection.token_expires_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+        minutes=1
+    )
+    google_connection.save()
+    fake_response = Mock()
+    fake_response.json.return_value = {"access_token": "refreshed-token", "expires_in": 3600}
+    fake_response.raise_for_status = Mock()
+
+    with patch("bookings.calendar.google.requests.post", return_value=fake_response):
+        from bookings.calendar.base import auth_header
+
+        header = auth_header(google_connection)
+
+    assert header == {"Authorization": "Bearer refreshed-token"}
+
+
+def test_auth_header_skips_refresh_when_token_still_valid(google_connection):
+    with patch(
+        "bookings.calendar.google.GoogleCalendarProvider.refresh_access_token"
+    ) as mock_refresh:
+        from bookings.calendar.base import auth_header
+
+        header = auth_header(google_connection)
+
+    mock_refresh.assert_not_called()
+    assert header == {"Authorization": "Bearer fake-google-token"}

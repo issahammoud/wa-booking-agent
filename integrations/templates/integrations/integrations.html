@@ -22,14 +22,14 @@
       No calendar connected yet - bookings are only tracked in this dashboard until you connect one.
     </p>
     <div class="mt-4 flex gap-3">
-      <button type="button" disabled
-        class="cursor-not-allowed rounded-md border border-gray-300 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-400">
-        Connect Google Calendar (coming soon)
-      </button>
-      <button type="button" disabled
-        class="cursor-not-allowed rounded-md border border-gray-300 bg-gray-100 px-4 py-2 text-sm font-medium text-gray-400">
-        Connect Outlook Calendar (coming soon)
-      </button>
+      <a href="{% url 'calendar-google-connect' %}"
+        class="rounded-md bg-brand-600 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-700">
+        Connect Google Calendar
+      </a>
+      <a href="{% url 'calendar-outlook-connect' %}"
+        class="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+        Connect Outlook Calendar
+      </a>
     </div>
   {% endif %}
 {% endblock %}

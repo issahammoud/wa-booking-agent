@@ -54,6 +54,10 @@ jobs:
       WHATSAPP_WEBHOOK_VERIFY_TOKEN: ci-verify-token
       WHATSAPP_APP_SECRET: ci-app-secret
       OPENROUTER_API_KEY: ci-openrouter-key
+      GOOGLE_OAUTH_CLIENT_ID: ci-google-client-id
+      GOOGLE_OAUTH_CLIENT_SECRET: ci-google-client-secret
+      MICROSOFT_OAUTH_CLIENT_ID: ci-microsoft-client-id
+      MICROSOFT_OAUTH_CLIENT_SECRET: ci-microsoft-client-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

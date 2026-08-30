@@ -1,12 +1,17 @@
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 
 import requests
+from django.conf import settings
+from django.utils import timezone
 
 from bookings.availability import TimeSlot
-from bookings.calendar.base import CalendarProvider, auth_header, day_bound
+from bookings.calendar.base import CalendarProvider, auth_header, day_bound, decode_token
 
 CALENDAR_VIEW_URL = "https://graph.microsoft.com/v1.0/me/calendarView"
 EVENTS_URL = "https://graph.microsoft.com/v1.0/me/events"
+AUTHORIZE_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+TOKEN_URL = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+OAUTH_SCOPE = "offline_access Calendars.ReadWrite"
 
 
 class OutlookCalendarProvider(CalendarProvider):
@@ -49,6 +54,29 @@ class OutlookCalendarProvider(CalendarProvider):
         )
         response.raise_for_status()
         return response.json()["id"]
+
+    def refresh_access_token(self, connection):
+        response = requests.post(
+            TOKEN_URL,
+            data={
+                "client_id": settings.MICROSOFT_OAUTH_CLIENT_ID,
+                "client_secret": settings.MICROSOFT_OAUTH_CLIENT_SECRET,
+                "refresh_token": decode_token(connection.refresh_token),
+                "grant_type": "refresh_token",
+                "scope": OAUTH_SCOPE,
+            },
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        connection.access_token = data["access_token"].encode()
+        connection.token_expires_at = timezone.now() + timedelta(seconds=data["expires_in"])
+        update_fields = ["access_token", "token_expires_at"]
+        # Microsoft rotates refresh tokens - persist the new one when given.
+        if "refresh_token" in data:
+            connection.refresh_token = data["refresh_token"].encode()
+            update_fields.append("refresh_token")
+        connection.save(update_fields=update_fields)
 
 
 def _utc_naive_iso(dt: datetime) -> str:

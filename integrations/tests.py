@@ -5,13 +5,17 @@ from unittest.mock import Mock, patch
 
 import pytest
 import requests
+from django.core.signing import dumps
 from django.urls import reverse
+from django.utils import timezone
 
 from conversations import buffer
 from conversations.models import Conversation, EndUser, Message
 from conversations.tasks import check_and_drain_buffer
 from integrations.agent.mock import MockAgent
 from integrations.agent.tools import ask_clarification, execute_tool
+from integrations.calendar_oauth import STATE_SALT
+from integrations.models import CalendarConnection
 from integrations.transcription import transcribe_audio
 from integrations.whatsapp_client import download_media, send_text_message
 
@@ -513,3 +517,127 @@ def test_integrations_page_shows_neutral_message_for_platform_admin(client, plat
     assert response.status_code == 200
     assert response.context["tenant"] is None
     assert b"Platform admins" in response.content
+
+
+def test_google_connect_redirects_with_signed_state(client, settings, staff_user):
+    settings.GOOGLE_OAUTH_CLIENT_ID = "test-google-client"
+    client.force_login(staff_user)
+
+    response = client.get(reverse("calendar-google-connect"))
+
+    assert response.status_code == 302
+    assert response.url.startswith("https://accounts.google.com/o/oauth2/v2/auth?")
+    assert "client_id=test-google-client" in response.url
+    assert "access_type=offline" in response.url
+    assert "state=" in response.url
+
+
+def test_google_connect_forbidden_for_platform_admin(client, platform_admin_user):
+    client.force_login(platform_admin_user)
+    response = client.get(reverse("calendar-google-connect"))
+    assert response.status_code == 403
+
+
+def test_google_callback_creates_calendar_connection(client, settings, staff_user, tenant):
+    settings.GOOGLE_OAUTH_CLIENT_ID = "test-google-client"
+    settings.GOOGLE_OAUTH_CLIENT_SECRET = "test-google-secret"
+    client.force_login(staff_user)
+    state = dumps({"tenant_id": tenant.id}, salt=STATE_SALT)
+
+    fake_response = Mock()
+    fake_response.raise_for_status = Mock()
+    fake_response.json.return_value = {
+        "access_token": "real-google-access-token",
+        "refresh_token": "real-google-refresh-token",
+        "expires_in": 3600,
+        "scope": "https://www.googleapis.com/auth/calendar.events",
+    }
+
+    with patch(
+        "integrations.calendar_oauth.requests.post", return_value=fake_response
+    ) as mock_post:
+        response = client.get(
+            reverse("calendar-google-callback"), {"code": "auth-code-123", "state": state}
+        )
+
+    assert response.status_code == 302
+    assert response.url == reverse("integrations")
+    assert mock_post.call_args.kwargs["data"]["code"] == "auth-code-123"
+
+    connection = CalendarConnection.objects.get(tenant=tenant)
+    assert connection.provider == "google"
+    assert bytes(connection.access_token) == b"real-google-access-token"
+    assert bytes(connection.refresh_token) == b"real-google-refresh-token"
+
+
+def test_google_callback_rejects_invalid_state(client, staff_user):
+    client.force_login(staff_user)
+    response = client.get(
+        reverse("calendar-google-callback"), {"code": "auth-code-123", "state": "tampered"}
+    )
+    assert response.status_code == 400
+
+
+def test_google_callback_rejects_missing_code(client, staff_user, tenant):
+    client.force_login(staff_user)
+    state = dumps({"tenant_id": tenant.id}, salt=STATE_SALT)
+    response = client.get(reverse("calendar-google-callback"), {"state": state})
+    assert response.status_code == 400
+
+
+def test_outlook_callback_creates_calendar_connection(client, settings, staff_user, tenant):
+    settings.MICROSOFT_OAUTH_CLIENT_ID = "test-ms-client"
+    settings.MICROSOFT_OAUTH_CLIENT_SECRET = "test-ms-secret"
+    client.force_login(staff_user)
+    state = dumps({"tenant_id": tenant.id}, salt=STATE_SALT)
+
+    fake_response = Mock()
+    fake_response.raise_for_status = Mock()
+    fake_response.json.return_value = {
+        "access_token": "real-outlook-access-token",
+        "refresh_token": "real-outlook-refresh-token",
+        "expires_in": 3600,
+        "scope": "Calendars.ReadWrite",
+    }
+
+    with patch("integrations.calendar_oauth.requests.post", return_value=fake_response):
+        response = client.get(
+            reverse("calendar-outlook-callback"), {"code": "auth-code-456", "state": state}
+        )
+
+    assert response.status_code == 302
+    connection = CalendarConnection.objects.get(tenant=tenant)
+    assert connection.provider == "outlook"
+    assert bytes(connection.access_token) == b"real-outlook-access-token"
+
+
+def test_calendar_callback_replaces_existing_connection(client, settings, staff_user, tenant):
+    settings.GOOGLE_OAUTH_CLIENT_ID = "test-google-client"
+    settings.GOOGLE_OAUTH_CLIENT_SECRET = "test-google-secret"
+    CalendarConnection.objects.create(
+        tenant=tenant,
+        provider="outlook",
+        external_calendar_id="primary",
+        access_token=b"old-token",
+        refresh_token=b"old-refresh",
+        token_expires_at=timezone.now(),
+    )
+    client.force_login(staff_user)
+    state = dumps({"tenant_id": tenant.id}, salt=STATE_SALT)
+
+    fake_response = Mock()
+    fake_response.raise_for_status = Mock()
+    fake_response.json.return_value = {
+        "access_token": "new-google-token",
+        "refresh_token": "new-google-refresh",
+        "expires_in": 3600,
+        "scope": "https://www.googleapis.com/auth/calendar.events",
+    }
+
+    with patch("integrations.calendar_oauth.requests.post", return_value=fake_response):
+        client.get(reverse("calendar-google-callback"), {"code": "auth-code-789", "state": state})
+
+    assert CalendarConnection.objects.filter(tenant=tenant).count() == 1
+    connection = CalendarConnection.objects.get(tenant=tenant)
+    assert connection.provider == "google"
+    assert bytes(connection.access_token) == b"new-google-token"

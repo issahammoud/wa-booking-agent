@@ -69,6 +69,10 @@ RUN DJANGO_SETTINGS_MODULE=config.settings.prod \
     WHATSAPP_WEBHOOK_VERIFY_TOKEN=build-only \
     WHATSAPP_APP_SECRET=build-only \
     OPENROUTER_API_KEY=build-only \
+    GOOGLE_OAUTH_CLIENT_ID=build-only \
+    GOOGLE_OAUTH_CLIENT_SECRET=build-only \
+    MICROSOFT_OAUTH_CLIENT_ID=build-only \
+    MICROSOFT_OAUTH_CLIENT_SECRET=build-only \
     python manage.py collectstatic --noinput
 
 RUN chown -R appuser:appuser /app

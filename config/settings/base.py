@@ -119,6 +119,15 @@ OPENROUTER_API_KEY = env("OPENROUTER_API_KEY")
 AGENT_MODEL = env("AGENT_MODEL", default="deepseek/deepseek-chat")
 TRANSCRIPTION_MODEL = env("TRANSCRIPTION_MODEL", default="openai/whisper-1")
 
+# OAuth clients for the "Connect Google/Outlook Calendar" flow
+# (integrations/calendar_oauth.py). Register a redirect URI matching
+# request.build_absolute_uri(reverse("calendar-<provider>-callback")) in
+# each provider's console.
+GOOGLE_OAUTH_CLIENT_ID = env("GOOGLE_OAUTH_CLIENT_ID")
+GOOGLE_OAUTH_CLIENT_SECRET = env("GOOGLE_OAUTH_CLIENT_SECRET")
+MICROSOFT_OAUTH_CLIENT_ID = env("MICROSOFT_OAUTH_CLIENT_ID")
+MICROSOFT_OAUTH_CLIENT_SECRET = env("MICROSOFT_OAUTH_CLIENT_SECRET")
+
 
 # Logging
 # Without this, every app module's logging.getLogger(__name__).info(...)
