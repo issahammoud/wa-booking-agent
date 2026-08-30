@@ -1,6 +1,7 @@
 import datetime
 import json
 from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 import requests
@@ -12,7 +13,7 @@ from integrations.agent import get_agent
 from integrations.agent.mock import MockAgent
 from integrations.agent.openrouter import FALLBACK_REPLY, OpenRouterAgent
 from integrations.agent.prompts import build_system_prompt
-from integrations.agent.tools import execute_tool
+from integrations.agent.tools import MAX_SUGGESTED_SLOTS, execute_tool, serialize_tool_result
 
 
 @pytest.fixture
@@ -49,28 +50,64 @@ def test_get_agent_returns_openrouter_when_configured(settings):
     assert isinstance(get_agent(), OpenRouterAgent)
 
 
-def test_openrouter_agent_returns_tool_call_from_response(conversation):
-    fake_response = _fake_completion(
+def _tool_call_completion(name, arguments, call_id="call_1"):
+    return _fake_completion(
         {
             "role": "assistant",
             "content": None,
             "tool_calls": [
-                {
-                    "function": {
-                        "name": "check_availability",
-                        "arguments": json.dumps({"service": "Consultation"}),
-                    }
-                }
+                {"id": call_id, "function": {"name": name, "arguments": json.dumps(arguments)}}
             ],
         }
     )
 
-    with patch("integrations.agent.openrouter.requests.post", return_value=fake_response):
+
+def test_openrouter_agent_executes_tool_and_returns_final_phrased_reply(tenant, conversation):
+    tenant.working_hours = {"mon": ["09:00", "17:00"]}
+    tenant.save()
+    first = _tool_call_completion("check_availability", {"service": "Consultation"})
+    second = _fake_completion({"role": "assistant", "content": "Here are a few times that work!"})
+
+    with patch(
+        "integrations.agent.openrouter.requests.post", side_effect=[first, second]
+    ) as mock_post:
         result = OpenRouterAgent().respond(conversation, list(conversation.messages.all()))
 
-    assert result.action == "tool_call"
-    assert result.tool == "check_availability"
-    assert result.tool_args == {"service": "Consultation"}
+    assert result.action == "reply"
+    assert result.text == "Here are a few times that work!"
+
+    # Second call feeds the tool result back as a role:"tool" message.
+    second_call_messages = mock_post.call_args_list[1].kwargs["json"]["messages"]
+    assert second_call_messages[-1]["role"] == "tool"
+    assert second_call_messages[-1]["tool_call_id"] == "call_1"
+    assert "available_slots" in second_call_messages[-1]["content"]
+    # No tools on the final-phrasing call - it must produce text, not another call.
+    assert "tools" not in mock_post.call_args_list[1].kwargs["json"]
+
+
+def test_openrouter_agent_falls_back_when_tool_name_unknown(conversation):
+    first = _tool_call_completion("not_a_real_tool", {})
+
+    with patch("integrations.agent.openrouter.requests.post", return_value=first):
+        result = OpenRouterAgent().respond(conversation, list(conversation.messages.all()))
+
+    assert result.action == "reply"
+    assert result.text == FALLBACK_REPLY
+
+
+def test_openrouter_agent_falls_back_when_final_phrasing_call_fails(tenant, conversation):
+    tenant.working_hours = {"mon": ["09:00", "17:00"]}
+    tenant.save()
+    first = _tool_call_completion("check_availability", {})
+
+    with patch(
+        "integrations.agent.openrouter.requests.post",
+        side_effect=[first, requests.ConnectionError],
+    ):
+        result = OpenRouterAgent().respond(conversation, list(conversation.messages.all()))
+
+    assert result.action == "reply"
+    assert result.text == FALLBACK_REPLY
 
 
 def test_openrouter_agent_returns_reply_from_response(conversation):
@@ -239,3 +276,71 @@ def test_build_system_prompt_states_working_hours_when_configured(tenant):
 def test_build_system_prompt_avoids_guessing_hours_when_unconfigured(tenant):
     prompt = build_system_prompt(tenant)
     assert "not yet configured" in prompt
+
+
+_ALL_DAYS_OPEN = {
+    day: ["00:00", "23:59"] for day in ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+}
+
+
+def test_check_availability_tool_caps_results(tenant):
+    tenant.working_hours = _ALL_DAYS_OPEN
+    tenant.save()
+
+    result = execute_tool("check_availability", tenant, None, {})
+
+    assert len(result) == MAX_SUGGESTED_SLOTS
+
+
+def test_check_availability_tool_pages_forward_with_after_date(tenant):
+    tenant.working_hours = _ALL_DAYS_OPEN
+    tenant.save()
+
+    first_batch = execute_tool("check_availability", tenant, None, {})
+    last_offered_date = first_batch[-1].start.date().isoformat()
+
+    second_batch = execute_tool(
+        "check_availability", tenant, None, {"after_date": last_offered_date}
+    )
+
+    assert all(slot.start.date().isoformat() > last_offered_date for slot in second_batch)
+
+
+def test_serialize_tool_result_check_availability(tenant):
+    tenant.working_hours = _ALL_DAYS_OPEN
+    tenant.save()
+    slots = execute_tool("check_availability", tenant, None, {})
+
+    payload = json.loads(serialize_tool_result("check_availability", slots, tenant))
+
+    assert len(payload["available_slots"]) == len(slots)
+
+
+def test_serialize_tool_result_create_booking_confirmed(tenant, conversation, service):
+    start = timezone.now() + datetime.timedelta(days=1)
+    result = execute_tool(
+        "create_booking",
+        tenant,
+        conversation,
+        {"service_name": "Consultation", "start_time": start.isoformat()},
+    )
+
+    payload = json.loads(serialize_tool_result("create_booking", result, tenant))
+
+    assert payload["status"] == "confirmed"
+    assert payload["service"] == "Consultation"
+
+
+def test_serialize_tool_result_create_booking_error(tenant, conversation):
+    result = {"status": "error", "message": "Sorry, that time was just taken"}
+    payload = json.loads(serialize_tool_result("create_booking", result, tenant))
+    assert payload == result
+
+
+def test_build_system_prompt_states_todays_date(tenant):
+    # Without this, a partial date like "September 1st" is resolved against
+    # the model's own training-data assumptions rather than reality - caused
+    # a real wrong-year booking during live testing.
+    prompt = build_system_prompt(tenant)
+    today_local = timezone.now().astimezone(ZoneInfo(tenant.timezone))
+    assert today_local.strftime("%Y-%m-%d") in prompt
